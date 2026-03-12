@@ -98,3 +98,28 @@ export async function transferWallet(
     }),
   });
 }
+
+// Payment initiation (mobile money)
+
+export async function initiatePayment(params: {
+  amount: number;
+  currency?: string;
+  description: string;
+  reference: string;
+  customer_phone?: string;
+  payment_method: "mobile_money" | "card";
+  callback_url?: string;
+  return_url?: string;
+}) {
+  return apiCall<{ checkout_url: string; payment_id: string }>(
+    "/api/payments/initiate",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        ...params,
+        currency: params.currency || "SLE",
+        source: "pos_store",
+      }),
+    }
+  );
+}

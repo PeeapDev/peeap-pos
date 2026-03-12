@@ -3,6 +3,8 @@ import { notFound } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
 import Image from "next/image";
 import Link from "next/link";
+import AddToCartButton from "@/components/shop/AddToCartButton";
+import CartIcon from "@/components/shop/CartIcon";
 
 const STORE_URL =
   process.env.NEXT_PUBLIC_STORE_URL || "https://store.peeap.com";
@@ -216,6 +218,20 @@ export default async function ProductPage({ params }: Props) {
                 )}
               </div>
 
+              {/* Add to Cart */}
+              <div className="mt-6">
+                <AddToCartButton
+                  product={{
+                    id: product.id,
+                    name: product.name,
+                    price: product.price,
+                    image_url: product.image_url,
+                  }}
+                  merchantSlug={params.merchantSlug}
+                  disabled={isOutOfStock}
+                />
+              </div>
+
               {/* Description */}
               {product.description && (
                 <div className="mt-6">
@@ -270,6 +286,7 @@ export default async function ProductPage({ params }: Props) {
             </div>
           </div>
         </div>
+        <CartIcon merchantSlug={params.merchantSlug} />
       </div>
     </>
   );

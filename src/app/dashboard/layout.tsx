@@ -7,6 +7,7 @@ import {
   ShoppingCart,
   Package,
   Receipt,
+  ShoppingBag,
   Boxes,
   Users,
   BarChart3,
@@ -29,6 +30,11 @@ const navItems = [
     href: "/dashboard/sales",
     label: "Sales",
     icon: Receipt,
+  },
+  {
+    href: "/dashboard/orders",
+    label: "Orders",
+    icon: ShoppingBag,
   },
   {
     href: "/dashboard/inventory",

@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
 import Link from "next/link";
 import Image from "next/image";
+import CartIcon from "@/components/shop/CartIcon";
 
 const STORE_URL =
   process.env.NEXT_PUBLIC_STORE_URL || "https://store.peeap.com";
@@ -223,6 +224,8 @@ export default async function StorePage({ params }: Props) {
             </div>
           )}
         </div>
+
+        <CartIcon merchantSlug={params.merchantSlug} />
       </div>
     </>
   );

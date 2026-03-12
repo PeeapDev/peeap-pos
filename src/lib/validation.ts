@@ -207,6 +207,36 @@ export const createHeldOrderSchema = z.object({
   notes: z.string().max(2000).optional(),
 });
 
+// Checkout (guest / public)
+export const checkoutItemSchema = z.object({
+  product_id: z.string().uuid(),
+  quantity: z.number().int().min(1),
+});
+
+export const checkoutSchema = z.object({
+  store_id: z.string().uuid(),
+  customer_name: z.string().min(1).max(255),
+  customer_phone: z.string().min(5).max(50),
+  customer_email: z.string().email().max(255).optional(),
+  items: z.array(checkoutItemSchema).min(1),
+  payment_method: z.enum(["mobile_money", "wallet"]),
+  notes: z.string().max(2000).optional(),
+});
+
+// Order status updates (merchant)
+export const updateOrderStatusSchema = z.object({
+  id: z.string().uuid(),
+  status: z.enum([
+    "pending",
+    "paid",
+    "processing",
+    "shipped",
+    "delivered",
+    "cancelled",
+  ]),
+  notes: z.string().max(2000).optional(),
+});
+
 // Settings
 export const updateSettingsSchema = z.object({
   store_name: z.string().max(255).optional(),
