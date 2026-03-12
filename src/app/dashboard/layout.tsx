@@ -6,16 +6,17 @@ import {
   LayoutDashboard,
   ShoppingCart,
   Package,
-  FolderTree,
+  Receipt,
+  Boxes,
+  Users,
   BarChart3,
   Settings,
-  Store,
   LogOut,
 } from "lucide-react";
 
 const navItems = [
   {
-    href: "/dashboard",
+    href: "/dashboard/terminal",
     label: "Terminal",
     icon: ShoppingCart,
   },
@@ -25,19 +26,24 @@ const navItems = [
     icon: Package,
   },
   {
-    href: "/dashboard/categories",
-    label: "Categories",
-    icon: FolderTree,
-  },
-  {
     href: "/dashboard/sales",
     label: "Sales",
-    icon: BarChart3,
+    icon: Receipt,
   },
   {
-    href: "/dashboard/store",
-    label: "Online Store",
-    icon: Store,
+    href: "/dashboard/inventory",
+    label: "Inventory",
+    icon: Boxes,
+  },
+  {
+    href: "/dashboard/customers",
+    label: "Customers",
+    icon: Users,
+  },
+  {
+    href: "/dashboard/reports",
+    label: "Reports",
+    icon: BarChart3,
   },
   {
     href: "/dashboard/settings",

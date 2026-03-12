@@ -112,3 +112,115 @@ export const createStoreSchema = z.object({
 });
 
 export const updateStoreSchema = createStoreSchema.partial();
+
+// Customers
+export const createCustomerSchema = z.object({
+  name: z.string().min(1).max(255),
+  email: z.string().email().max(255).optional(),
+  phone: z.string().max(50).optional(),
+  address: z.string().max(500).optional(),
+  notes: z.string().max(2000).optional(),
+  is_active: z.boolean().default(true),
+});
+
+export const updateCustomerSchema = createCustomerSchema.partial();
+
+// Staff
+export const createStaffSchema = z.object({
+  name: z.string().min(1).max(255),
+  email: z.string().email().max(255).optional(),
+  phone: z.string().max(50).optional(),
+  role: z
+    .enum(["cashier", "manager", "admin"])
+    .default("cashier"),
+  pin: z.string().min(4).max(6).regex(/^\d+$/).optional(),
+  is_active: z.boolean().default(true),
+});
+
+export const updateStaffSchema = createStaffSchema.partial();
+
+// Cash Sessions
+export const openCashSessionSchema = z.object({
+  opening_amount: z.number().min(0),
+  opened_by: z.string().max(255).optional(),
+  notes: z.string().max(500).optional(),
+});
+
+export const cashSessionActionSchema = z.object({
+  action: z.enum(["close", "cash_in", "cash_out"]),
+  amount: z.number().min(0).optional(),
+  closing_amount: z.number().min(0).optional(),
+  notes: z.string().max(500).optional(),
+  closed_by: z.string().max(255).optional(),
+});
+
+// Discounts
+export const createDiscountSchema = z.object({
+  name: z.string().min(1).max(255),
+  code: z.string().min(1).max(50).optional(),
+  type: z.enum(["percentage", "fixed"]),
+  value: z.number().min(0),
+  min_order_amount: z.number().min(0).default(0),
+  max_discount_amount: z.number().min(0).optional(),
+  usage_limit: z.number().int().min(0).optional(),
+  starts_at: z.string().optional(),
+  expires_at: z.string().optional(),
+  is_active: z.boolean().default(true),
+  applies_to: z
+    .enum(["all", "category", "product"])
+    .default("all"),
+  target_ids: z.array(z.string().uuid()).optional(),
+});
+
+export const updateDiscountSchema = createDiscountSchema.partial();
+
+// Inventory
+export const inventoryAdjustmentSchema = z.object({
+  product_id: z.string().uuid(),
+  type: z.enum([
+    "adjustment",
+    "restock",
+    "return",
+    "damage",
+    "transfer",
+    "count",
+  ]),
+  quantity_change: z.number().int(),
+  reason: z.string().max(500).optional(),
+});
+
+export const inventoryThresholdSchema = z.object({
+  product_id: z.string().uuid(),
+  low_stock_threshold: z.number().int().min(0),
+});
+
+// Held Orders
+export const createHeldOrderSchema = z.object({
+  name: z.string().min(1).max(255),
+  items: z.array(z.any()).min(1),
+  subtotal: z.number().min(0),
+  tax_amount: z.number().min(0).default(0),
+  discount_amount: z.number().min(0).default(0),
+  total_amount: z.number().min(0),
+  customer_name: z.string().max(255).optional(),
+  customer_phone: z.string().max(50).optional(),
+  notes: z.string().max(2000).optional(),
+});
+
+// Settings
+export const updateSettingsSchema = z.object({
+  store_name: z.string().max(255).optional(),
+  currency: z.string().max(10).default("SLE"),
+  tax_rate: z.number().min(0).max(100).default(0),
+  tax_inclusive: z.boolean().default(false),
+  receipt_header: z.string().max(1000).optional(),
+  receipt_footer: z.string().max(1000).optional(),
+  receipt_show_logo: z.boolean().default(true),
+  low_stock_alert: z.boolean().default(true),
+  low_stock_threshold: z.number().int().min(0).default(10),
+  require_customer: z.boolean().default(false),
+  allow_negative_stock: z.boolean().default(false),
+  auto_print_receipt: z.boolean().default(false),
+  sound_enabled: z.boolean().default(true),
+  theme: z.enum(["light", "dark", "system"]).default("system"),
+});
