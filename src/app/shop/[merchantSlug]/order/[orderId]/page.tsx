@@ -2,15 +2,8 @@ import { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
 import Link from "next/link";
-import {
-  CheckCircle2,
-  Clock,
-  Package,
-  Truck,
-  XCircle,
-  CreditCard,
-  ArrowLeft,
-} from "lucide-react";
+import { ArrowLeft } from "lucide-react";
+import OrderStatusPoller from "@/components/shop/OrderStatusPoller";
 
 function getSupabase() {
   return createClient(
@@ -31,60 +24,6 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   };
 }
 
-const statusConfig: Record<
-  string,
-  {
-    label: string;
-    color: string;
-    bgColor: string;
-    icon: React.ElementType;
-    message: string;
-  }
-> = {
-  pending: {
-    label: "Pending",
-    color: "text-yellow-700",
-    bgColor: "bg-yellow-100",
-    icon: Clock,
-    message: "Awaiting payment. Please complete your payment to proceed.",
-  },
-  paid: {
-    label: "Paid",
-    color: "text-green-700",
-    bgColor: "bg-green-100",
-    icon: CreditCard,
-    message: "Payment received! Your order is being prepared.",
-  },
-  processing: {
-    label: "Processing",
-    color: "text-blue-700",
-    bgColor: "bg-blue-100",
-    icon: Package,
-    message: "Your order is being prepared by the merchant.",
-  },
-  shipped: {
-    label: "Shipped",
-    color: "text-purple-700",
-    bgColor: "bg-purple-100",
-    icon: Truck,
-    message: "Your order is on the way!",
-  },
-  delivered: {
-    label: "Delivered",
-    color: "text-green-700",
-    bgColor: "bg-green-100",
-    icon: CheckCircle2,
-    message: "Your order has been delivered. Thank you for shopping!",
-  },
-  cancelled: {
-    label: "Cancelled",
-    color: "text-red-700",
-    bgColor: "bg-red-100",
-    icon: XCircle,
-    message: "This order has been cancelled.",
-  },
-};
-
 export default async function OrderConfirmationPage({ params }: Props) {
   const supabase = getSupabase();
 
@@ -103,9 +42,6 @@ export default async function OrderConfirmationPage({ params }: Props) {
     .select("name, slug")
     .eq("slug", params.merchantSlug)
     .single();
-
-  const status = statusConfig[order.status] || statusConfig.pending;
-  const StatusIcon = status.icon;
 
   const formattedDate = new Date(order.created_at).toLocaleDateString(
     "en-US",
@@ -136,25 +72,17 @@ export default async function OrderConfirmationPage({ params }: Props) {
       </div>
 
       <div className="max-w-3xl mx-auto px-4 py-8">
-        {/* Status Banner */}
-        <div
-          className={`rounded-lg p-6 mb-6 ${status.bgColor} flex items-start gap-4`}
-        >
-          <StatusIcon className={`w-8 h-8 ${status.color} shrink-0 mt-0.5`} />
-          <div>
-            <div className="flex items-center gap-3 mb-1">
-              <h2 className={`text-xl font-bold ${status.color}`}>
-                {status.label}
-              </h2>
-              <span
-                className={`text-xs font-medium px-2.5 py-0.5 rounded-full ${status.bgColor} ${status.color} border border-current/20`}
-              >
-                {order.order_number}
-              </span>
-            </div>
-            <p className={`text-sm ${status.color} opacity-80`}>
-              {status.message}
-            </p>
+        {/* Status Banner with live polling */}
+        <div className="mb-6">
+          <OrderStatusPoller
+            orderId={order.id}
+            initialStatus={order.status}
+          />
+          {/* Order number badge */}
+          <div className="mt-3 text-center">
+            <span className="inline-flex items-center text-xs font-medium px-3 py-1 rounded-full bg-gray-100 text-gray-600">
+              Order {order.order_number}
+            </span>
           </div>
         </div>
 

@@ -9,10 +9,14 @@ import {
   Package,
   Loader2,
   AlertTriangle,
+  Sparkles,
+  Upload,
+  X,
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { formatCurrency } from "@/utils/currency";
 import Modal from "@/components/ui/Modal";
+import ImageEnhancer from "@/components/ui/ImageEnhancer";
 
 interface Category {
   id: string;
@@ -48,6 +52,7 @@ const emptyForm = {
   sku: "",
   barcode: "",
   category_id: "",
+  image_url: "",
   track_inventory: false,
   stock_quantity: 0,
   is_published: false,
@@ -68,6 +73,8 @@ export default function ProductsPage() {
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Product | null>(null);
+  const [enhancerOpen, setEnhancerOpen] = useState(false);
+  const [uploadingImage, setUploadingImage] = useState(false);
 
   const headers = useMemo(
     () => ({
@@ -132,6 +139,7 @@ export default function ProductsPage() {
       sku: product.sku || "",
       barcode: product.barcode || "",
       category_id: product.category_id || "",
+      image_url: product.image_url || "",
       track_inventory: product.track_inventory,
       stock_quantity: product.stock_quantity || 0,
       is_published: product.is_published,
@@ -157,6 +165,7 @@ export default function ProductsPage() {
       if (form.sku) body.sku = form.sku;
       if (form.barcode) body.barcode = form.barcode;
       if (form.category_id) body.category_id = form.category_id;
+      if (form.image_url) body.image_url = form.image_url;
       if (form.slug) body.slug = form.slug;
       if (form.seo_title) body.seo_title = form.seo_title;
       if (form.seo_description) body.seo_description = form.seo_description;
@@ -332,6 +341,18 @@ export default function ProductsPage() {
                     </td>
                     <td className="px-4 py-3 text-right">
                       <div className="flex items-center justify-end gap-1">
+                        {product.image_url && (
+                          <button
+                            onClick={() => {
+                              openEdit(product);
+                              setTimeout(() => setEnhancerOpen(true), 100);
+                            }}
+                            className="p-1.5 hover:bg-purple-50 rounded-lg text-gray-500 hover:text-purple-600"
+                            title="AI Enhance Image"
+                          >
+                            <Sparkles className="w-4 h-4" />
+                          </button>
+                        )}
                         <button
                           onClick={() => openEdit(product)}
                           className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-500 hover:text-gray-700"
@@ -386,6 +407,95 @@ export default function ProductsPage() {
                 rows={2}
                 className="w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
               />
+            </div>
+
+            {/* Product Image */}
+            <div className="col-span-2">
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Product Image
+              </label>
+              <div className="flex items-start gap-4">
+                {/* Image preview */}
+                <div className="w-24 h-24 rounded-lg border bg-gray-50 overflow-hidden flex items-center justify-center shrink-0">
+                  {form.image_url ? (
+                    <img
+                      src={form.image_url}
+                      alt="Product"
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <Package className="w-8 h-8 text-gray-300" />
+                  )}
+                </div>
+
+                <div className="flex-1 space-y-2">
+                  {/* URL input */}
+                  <input
+                    type="url"
+                    value={form.image_url}
+                    onChange={(e) => updateField("image_url", e.target.value)}
+                    className="w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                    placeholder="https://example.com/image.jpg"
+                  />
+
+                  <div className="flex items-center gap-2">
+                    {/* File upload */}
+                    <label className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 border rounded-lg hover:bg-gray-50 cursor-pointer transition-colors">
+                      <Upload className="w-3.5 h-3.5" />
+                      Upload
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          if (!file || !token) return;
+                          setUploadingImage(true);
+                          try {
+                            const formData = new FormData();
+                            formData.append("file", file);
+                            // Use object URL as temporary preview
+                            const previewUrl = URL.createObjectURL(file);
+                            updateField("image_url", previewUrl);
+                          } catch {
+                            // Silently fail, user can paste URL manually
+                          } finally {
+                            setUploadingImage(false);
+                          }
+                        }}
+                      />
+                    </label>
+
+                    {/* AI Enhance button */}
+                    {form.image_url && (
+                      <button
+                        type="button"
+                        onClick={() => setEnhancerOpen(true)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-purple-700 bg-purple-50 border border-purple-200 rounded-lg hover:bg-purple-100 transition-colors"
+                      >
+                        <Sparkles className="w-3.5 h-3.5" />
+                        AI Enhance
+                      </button>
+                    )}
+
+                    {/* Clear image */}
+                    {form.image_url && (
+                      <button
+                        type="button"
+                        onClick={() => updateField("image_url", "")}
+                        className="p-1.5 text-gray-400 hover:text-red-500 rounded-lg hover:bg-red-50 transition-colors"
+                        title="Remove image"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+
+                    {uploadingImage && (
+                      <Loader2 className="w-4 h-4 animate-spin text-gray-400" />
+                    )}
+                  </div>
+                </div>
+              </div>
             </div>
 
             <div>
@@ -605,6 +715,19 @@ export default function ProductsPage() {
           </div>
         </div>
       </Modal>
+
+      {/* AI Image Enhancer */}
+      {enhancerOpen && form.image_url && (
+        <ImageEnhancer
+          imageUrl={form.image_url}
+          productName={form.name || undefined}
+          onEnhanced={(newUrl) => {
+            updateField("image_url", newUrl);
+            setEnhancerOpen(false);
+          }}
+          onClose={() => setEnhancerOpen(false)}
+        />
+      )}
     </div>
   );
 }

@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { ShoppingCart, Plus, Minus, Check } from "lucide-react";
+import { useState, useEffect, useRef } from "react";
+import { ShoppingCart, Plus, Minus, Check, Eye, CreditCard } from "lucide-react";
+import Link from "next/link";
 
 interface CartProduct {
   id: string;
@@ -22,6 +23,8 @@ interface AddToCartButtonProps {
   product: CartProduct;
   merchantSlug: string;
   disabled?: boolean;
+  stockQuantity?: number;
+  trackInventory?: boolean;
 }
 
 function getCartKey(merchantSlug: string) {
@@ -53,10 +56,14 @@ export default function AddToCartButton({
   product,
   merchantSlug,
   disabled = false,
+  stockQuantity,
+  trackInventory = false,
 }: AddToCartButtonProps) {
   const [quantity, setQuantity] = useState(1);
   const [added, setAdded] = useState(false);
   const [existingQty, setExistingQty] = useState(0);
+  const [stockError, setStockError] = useState<string | null>(null);
+  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const cart = getCart(merchantSlug);
@@ -66,7 +73,31 @@ export default function AddToCartButton({
     }
   }, [merchantSlug, product.id]);
 
+  // Clean up timer on unmount
+  useEffect(() => {
+    return () => {
+      if (hideTimerRef.current) {
+        clearTimeout(hideTimerRef.current);
+      }
+    };
+  }, []);
+
   const handleAdd = () => {
+    setStockError(null);
+
+    // Client-side stock validation
+    if (trackInventory && stockQuantity !== undefined) {
+      const totalRequested = existingQty + quantity;
+      if (totalRequested > stockQuantity) {
+        setStockError(
+          stockQuantity <= 0
+            ? "This product is out of stock."
+            : `Only ${stockQuantity} available. You already have ${existingQty} in your cart.`
+        );
+        return;
+      }
+    }
+
     const cart = getCart(merchantSlug);
     const idx = cart.findIndex((item) => item.product_id === product.id);
 
@@ -87,7 +118,13 @@ export default function AddToCartButton({
     setAdded(true);
     setQuantity(1);
 
-    setTimeout(() => setAdded(false), 2000);
+    // Clear any previous timer
+    if (hideTimerRef.current) {
+      clearTimeout(hideTimerRef.current);
+    }
+
+    // Auto-hide after 3 seconds
+    hideTimerRef.current = setTimeout(() => setAdded(false), 3000);
   };
 
   return (
@@ -118,6 +155,11 @@ export default function AddToCartButton({
         </div>
       </div>
 
+      {/* Stock error */}
+      {stockError && (
+        <p className="text-sm text-red-600 font-medium">{stockError}</p>
+      )}
+
       {/* Add to Cart button */}
       <button
         type="button"
@@ -143,6 +185,26 @@ export default function AddToCartButton({
           </>
         )}
       </button>
+
+      {/* Post-add actions: View Cart and Checkout links */}
+      {added && (
+        <div className="flex gap-3 animate-in fade-in duration-200">
+          <Link
+            href={`/shop/${merchantSlug}/cart`}
+            className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg font-medium text-green-700 bg-green-50 border border-green-200 hover:bg-green-100 transition-colors text-sm"
+          >
+            <Eye className="w-4 h-4" />
+            View Cart
+          </Link>
+          <Link
+            href={`/shop/${merchantSlug}/checkout`}
+            className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg font-medium text-white bg-green-600 hover:bg-green-700 transition-colors text-sm"
+          >
+            <CreditCard className="w-4 h-4" />
+            Checkout
+          </Link>
+        </div>
+      )}
 
       {existingQty > 0 && !added && (
         <p className="text-sm text-gray-500 text-center">

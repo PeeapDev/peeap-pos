@@ -4,6 +4,7 @@ import { createClient } from "@supabase/supabase-js";
 import Link from "next/link";
 import Image from "next/image";
 import CartIcon from "@/components/shop/CartIcon";
+import QuickAddToCartButton from "@/components/shop/QuickAddToCartButton";
 
 const STORE_URL =
   process.env.NEXT_PUBLIC_STORE_URL || "https://store.peeap.com";
@@ -177,7 +178,7 @@ export default async function StorePage({ params }: Props) {
                     <Link
                       key={product.id}
                       href={`/shop/${params.merchantSlug}/${productSlug}`}
-                      className="bg-white rounded-lg overflow-hidden shadow-sm hover:shadow-md transition-shadow"
+                      className="group bg-white rounded-lg overflow-hidden shadow-sm hover:shadow-md transition-shadow relative"
                     >
                       <div className="aspect-square relative bg-gray-100">
                         {product.image_url ? (
@@ -198,6 +199,16 @@ export default async function StorePage({ params }: Props) {
                             Featured
                           </span>
                         )}
+                        {/* Quick Add to Cart button - shows on hover */}
+                        <QuickAddToCartButton
+                          product={{
+                            id: product.id,
+                            name: product.name,
+                            price: product.price,
+                            image_url: product.image_url,
+                          }}
+                          merchantSlug={params.merchantSlug}
+                        />
                       </div>
                       <div className="p-3">
                         <h3 className="font-medium text-gray-900 text-sm line-clamp-2">

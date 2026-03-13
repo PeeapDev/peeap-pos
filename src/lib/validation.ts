@@ -223,6 +223,18 @@ export const checkoutSchema = z.object({
   notes: z.string().max(2000).optional(),
 });
 
+// AI Image Enhancement
+export const enhanceImageSchema = z.object({
+  image_url: z.string().url(),
+  enhancement_type: z.enum(["upscale", "remove_bg", "enhance", "auto_crop"]),
+});
+
+// AI Image Generation
+export const generateImageSchema = z.object({
+  prompt: z.string().min(5).max(500),
+  product_name: z.string().min(1).max(255),
+});
+
 // Order status updates (merchant)
 export const updateOrderStatusSchema = z.object({
   id: z.string().uuid(),

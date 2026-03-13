@@ -4,6 +4,7 @@ import { createClient } from "@supabase/supabase-js";
 import Image from "next/image";
 import Link from "next/link";
 import AddToCartButton from "@/components/shop/AddToCartButton";
+import BuyNowButton from "@/components/shop/BuyNowButton";
 import CartIcon from "@/components/shop/CartIcon";
 
 const STORE_URL =
@@ -116,6 +117,10 @@ export default async function ProductPage({ params }: Props) {
   };
 
   const isOutOfStock = product.track_inventory && product.stock_quantity <= 0;
+  const isLowStock =
+    product.track_inventory &&
+    product.stock_quantity > 0 &&
+    product.stock_quantity <= 5;
 
   return (
     <>
@@ -125,21 +130,29 @@ export default async function ProductPage({ params }: Props) {
       />
 
       <div className="min-h-screen bg-gray-50">
-        {/* Breadcrumb */}
+        {/* Breadcrumb + View Cart */}
         <div className="bg-white border-b">
-          <div className="max-w-7xl mx-auto px-4 py-3 text-sm text-gray-500">
-            <Link href="/" className="hover:text-gray-700">
-              Home
-            </Link>
-            <span className="mx-2">/</span>
+          <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
+            <div className="text-sm text-gray-500">
+              <Link href="/" className="hover:text-gray-700">
+                Home
+              </Link>
+              <span className="mx-2">/</span>
+              <Link
+                href={`/shop/${params.merchantSlug}`}
+                className="hover:text-gray-700"
+              >
+                {store.name}
+              </Link>
+              <span className="mx-2">/</span>
+              <span className="text-gray-900">{product.name}</span>
+            </div>
             <Link
-              href={`/shop/${params.merchantSlug}`}
-              className="hover:text-gray-700"
+              href={`/shop/${params.merchantSlug}/cart`}
+              className="text-sm font-medium text-green-600 hover:text-green-700 transition-colors"
             >
-              {store.name}
+              View Cart
             </Link>
-            <span className="mx-2">/</span>
-            <span className="text-gray-900">{product.name}</span>
           </div>
         </div>
 
@@ -205,11 +218,15 @@ export default async function ProductPage({ params }: Props) {
                   )}
               </div>
 
-              {/* Availability */}
+              {/* Availability / Stock Status */}
               <div className="mt-4">
                 {isOutOfStock ? (
                   <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-red-100 text-red-700">
                     Out of Stock
+                  </span>
+                ) : isLowStock ? (
+                  <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-yellow-100 text-yellow-700">
+                    Low Stock &mdash; Only {product.stock_quantity} left
                   </span>
                 ) : (
                   <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-green-100 text-green-700">
@@ -218,9 +235,21 @@ export default async function ProductPage({ params }: Props) {
                 )}
               </div>
 
-              {/* Add to Cart */}
-              <div className="mt-6">
+              {/* Add to Cart + Buy Now */}
+              <div className="mt-6 space-y-3">
                 <AddToCartButton
+                  product={{
+                    id: product.id,
+                    name: product.name,
+                    price: product.price,
+                    image_url: product.image_url,
+                  }}
+                  merchantSlug={params.merchantSlug}
+                  disabled={isOutOfStock}
+                  stockQuantity={product.stock_quantity}
+                  trackInventory={product.track_inventory}
+                />
+                <BuyNowButton
                   product={{
                     id: product.id,
                     name: product.name,

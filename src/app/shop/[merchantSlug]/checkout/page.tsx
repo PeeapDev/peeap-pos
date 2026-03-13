@@ -53,6 +53,9 @@ export default function CheckoutPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [storeId, setStoreId] = useState<string | null>(null);
+  const [storeLoading, setStoreLoading] = useState(true);
+  const [storeError, setStoreError] = useState<string | null>(null);
+  const [phoneError, setPhoneError] = useState<string | null>(null);
 
   // Form state
   const [customerName, setCustomerName] = useState("");
@@ -63,21 +66,63 @@ export default function CheckoutPage() {
     "mobile_money" | "wallet"
   >("mobile_money");
 
+  // Phone number validation:
+  // Sierra Leone: +232 followed by 2 digits then 6 digits, or local 0xx xxxxxxx
+  // International: + followed by 7-15 digits
+  const validatePhone = (phone: string): boolean => {
+    const cleaned = phone.replace(/[\s\-()]/g, "");
+    // Sierra Leone formats
+    const slPattern = /^(\+232|232|0)(3[0-3]|7[6-8]|8[0-8]|2[0-9])\d{6}$/;
+    // Generic international format
+    const intlPattern = /^\+?\d{7,15}$/;
+    return slPattern.test(cleaned) || intlPattern.test(cleaned);
+  };
+
+  const handlePhoneChange = (value: string) => {
+    setCustomerPhone(value);
+    if (phoneError && value.trim()) {
+      // Clear error as user types if it looks like they're correcting
+      const cleaned = value.replace(/[\s\-()]/g, "");
+      if (cleaned.length >= 7) {
+        setPhoneError(validatePhone(value) ? null : phoneError);
+      }
+    }
+  };
+
   useEffect(() => {
     setMounted(true);
     const cart = getCart(merchantSlug);
     setItems(cart);
 
+    // If cart is empty, redirect to store
+    if (cart.length === 0) {
+      // We'll handle this in the render phase since router might not be ready
+    }
+
     // Fetch store ID by slug
+    setStoreLoading(true);
     fetch(`/api/stores?slug=${merchantSlug}`)
-      .then((res) => res.json())
+      .then((res) => {
+        if (!res.ok) throw new Error("Store not found");
+        return res.json();
+      })
       .then((data) => {
         if (data.store?.id) {
           setStoreId(data.store.id);
+        } else {
+          setStoreError(
+            "Could not load store information. Please try again later."
+          );
         }
       })
       .catch((err) => {
         console.error("Failed to fetch store:", err);
+        setStoreError(
+          "Failed to load store information. Please check your connection and try again."
+        );
+      })
+      .finally(() => {
+        setStoreLoading(false);
       });
   }, [merchantSlug]);
 
@@ -90,6 +135,7 @@ export default function CheckoutPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    setPhoneError(null);
 
     if (!storeId) {
       setError("Store information not available. Please try again.");
@@ -98,6 +144,14 @@ export default function CheckoutPage() {
 
     if (items.length === 0) {
       setError("Your cart is empty.");
+      return;
+    }
+
+    // Validate phone number
+    if (!validatePhone(customerPhone)) {
+      setPhoneError(
+        "Please enter a valid phone number. Examples: +232 76 123456, 076123456, or any international number."
+      );
       return;
     }
 
@@ -147,10 +201,42 @@ export default function CheckoutPage() {
     }
   };
 
-  if (!mounted) {
+  if (!mounted || storeLoading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="animate-pulse text-gray-400">Loading...</div>
+        <div className="text-center">
+          <Loader2 className="w-8 h-8 animate-spin text-green-600 mx-auto mb-3" />
+          <p className="text-gray-500">Loading checkout...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (storeError) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center max-w-md">
+          <AlertCircle className="w-16 h-16 text-red-400 mx-auto mb-4" />
+          <h2 className="text-xl font-semibold text-gray-700 mb-2">
+            Something went wrong
+          </h2>
+          <p className="text-gray-500 mb-6">{storeError}</p>
+          <div className="flex gap-3 justify-center">
+            <button
+              onClick={() => window.location.reload()}
+              className="inline-flex items-center gap-2 bg-green-600 text-white px-6 py-3 rounded-lg font-semibold hover:bg-green-700 transition-colors"
+            >
+              Try Again
+            </button>
+            <Link
+              href={`/shop/${merchantSlug}`}
+              className="inline-flex items-center gap-2 bg-gray-100 text-gray-700 px-6 py-3 rounded-lg font-semibold hover:bg-gray-200 transition-colors"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              Back to Store
+            </Link>
+          </div>
+        </div>
       </div>
     );
   }
@@ -182,17 +268,25 @@ export default function CheckoutPage() {
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
       <div className="bg-white border-b">
-        <div className="max-w-5xl mx-auto px-4 py-4 flex items-center gap-3">
+        <div className="max-w-5xl mx-auto px-4 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Link
+              href={`/shop/${merchantSlug}/cart`}
+              className="text-gray-600 hover:text-gray-900 transition-colors"
+            >
+              <ArrowLeft className="w-5 h-5" />
+            </Link>
+            <h1 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+              <Lock className="w-5 h-5 text-green-600" />
+              Checkout
+            </h1>
+          </div>
           <Link
             href={`/shop/${merchantSlug}/cart`}
-            className="text-gray-600 hover:text-gray-900 transition-colors"
+            className="text-sm font-medium text-green-600 hover:text-green-700 transition-colors"
           >
-            <ArrowLeft className="w-5 h-5" />
+            Back to Cart
           </Link>
-          <h1 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-            <Lock className="w-5 h-5 text-green-600" />
-            Checkout
-          </h1>
         </div>
       </div>
 
@@ -244,10 +338,17 @@ export default function CheckoutPage() {
                     type="tel"
                     required
                     value={customerPhone}
-                    onChange={(e) => setCustomerPhone(e.target.value)}
+                    onChange={(e) => handlePhoneChange(e.target.value)}
                     placeholder="+232 76 123456"
-                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none transition-colors"
+                    className={`w-full px-4 py-2.5 border rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none transition-colors ${
+                      phoneError
+                        ? "border-red-300 bg-red-50"
+                        : "border-gray-300"
+                    }`}
                   />
+                  {phoneError && (
+                    <p className="text-sm text-red-600 mt-1">{phoneError}</p>
+                  )}
                 </div>
 
                 <div>
