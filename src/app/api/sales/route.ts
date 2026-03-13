@@ -30,6 +30,24 @@ export async function GET(request: NextRequest) {
     const startDate = searchParams.get("start_date");
     const endDate = searchParams.get("end_date");
     const paymentMethod = searchParams.get("payment_method");
+    const kitchen = searchParams.get("kitchen");
+
+    // Kitchen display mode: return orders needing kitchen attention
+    if (kitchen === "true") {
+      const { data, error } = await supabase
+        .from("pos_sales")
+        .select("*, items:pos_sale_items(*)")
+        .eq("merchant_id", auth.sub)
+        .neq("kitchen_status", "completed")
+        .order("created_at", { ascending: true });
+
+      if (error) throw error;
+
+      return NextResponse.json(
+        { sales: data || [], total: (data || []).length },
+        { headers }
+      );
+    }
 
     let query = supabase
       .from("pos_sales")
@@ -62,6 +80,73 @@ export async function GET(request: NextRequest) {
     console.error("Error fetching sales:", err);
     return NextResponse.json(
       { error: "Failed to fetch sales" },
+      { status: 500, headers }
+    );
+  }
+}
+
+// PUT /api/sales?id=<uuid> — Update a sale (kitchen_status, etc.)
+export async function PUT(request: NextRequest) {
+  const origin = request.headers.get("origin");
+  const headers = corsHeaders(origin);
+
+  const auth = await authenticateRequest(request);
+  if (!auth) {
+    return NextResponse.json(
+      { error: "Unauthorized" },
+      { status: 401, headers }
+    );
+  }
+
+  const saleId = new URL(request.url).searchParams.get("id");
+  if (!saleId) {
+    return NextResponse.json(
+      { error: "Missing sale id" },
+      { status: 400, headers }
+    );
+  }
+
+  try {
+    const body = await request.json();
+    const allowedFields: Record<string, unknown> = {};
+
+    // Only allow updating specific fields
+    if (body.kitchen_status) {
+      const validStatuses = ["new", "preparing", "ready", "completed"];
+      if (!validStatuses.includes(body.kitchen_status)) {
+        return NextResponse.json(
+          { error: "Invalid kitchen_status" },
+          { status: 400, headers }
+        );
+      }
+      allowedFields.kitchen_status = body.kitchen_status;
+    }
+
+    if (body.status) {
+      allowedFields.status = body.status;
+    }
+
+    if (body.notes !== undefined) {
+      allowedFields.notes = body.notes;
+    }
+
+    allowedFields.updated_at = new Date().toISOString();
+
+    const { data, error } = await supabase
+      .from("pos_sales")
+      .update(allowedFields)
+      .eq("id", saleId)
+      .eq("merchant_id", auth.sub)
+      .select("*, items:pos_sale_items(*)")
+      .single();
+
+    if (error) throw error;
+
+    return NextResponse.json({ sale: data }, { headers });
+  } catch (err) {
+    console.error("Error updating sale:", err);
+    return NextResponse.json(
+      { error: "Failed to update sale" },
       { status: 500, headers }
     );
   }

@@ -13,6 +13,12 @@ import {
   BarChart3,
   Settings,
   LogOut,
+  ChefHat,
+  LayoutGrid,
+  UserCog,
+  Tag,
+  Truck,
+  Printer,
 } from "lucide-react";
 
 const navItems = [
@@ -37,6 +43,16 @@ const navItems = [
     icon: ShoppingBag,
   },
   {
+    href: "/dashboard/kitchen",
+    label: "Kitchen",
+    icon: ChefHat,
+  },
+  {
+    href: "/dashboard/tables",
+    label: "Tables",
+    icon: LayoutGrid,
+  },
+  {
     href: "/dashboard/inventory",
     label: "Inventory",
     icon: Boxes,
@@ -45,6 +61,26 @@ const navItems = [
     href: "/dashboard/customers",
     label: "Customers",
     icon: Users,
+  },
+  {
+    href: "/dashboard/staff",
+    label: "Staff",
+    icon: UserCog,
+  },
+  {
+    href: "/dashboard/discounts",
+    label: "Discounts",
+    icon: Tag,
+  },
+  {
+    href: "/dashboard/suppliers",
+    label: "Suppliers",
+    icon: Truck,
+  },
+  {
+    href: "/dashboard/receipts",
+    label: "Receipts",
+    icon: Printer,
   },
   {
     href: "/dashboard/reports",

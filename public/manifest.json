@@ -1,0 +1,25 @@
+{
+  "name": "Peeap POS",
+  "short_name": "PeeapPOS",
+  "description": "Point of Sale system by Peeap - manage sales, inventory, and staff",
+  "start_url": "/dashboard/terminal",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#2563eb",
+  "orientation": "any",
+  "categories": ["business", "finance"],
+  "icons": [
+    {
+      "src": "/icons/icon-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
