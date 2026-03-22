@@ -4,6 +4,7 @@ import { createClient } from "@supabase/supabase-js";
 import Link from "next/link";
 import Image from "next/image";
 import CartIcon from "@/components/shop/CartIcon";
+import ShopUserButton from "@/components/shop/ShopUserButton";
 import QuickAddToCartButton from "@/components/shop/QuickAddToCartButton";
 import LiveActivityFeed from "@/components/marketplace/LiveActivityFeed";
 
@@ -168,6 +169,11 @@ export default async function StorePage({ params }: Props) {
       />
 
       <div className="min-h-screen bg-gray-50">
+        {/* User login button - top right */}
+        <div className="absolute top-4 right-4 z-20">
+          <ShopUserButton merchantSlug={params.merchantSlug} />
+        </div>
+
         {/* Banner */}
         <div className="relative">
           {store.banner_url ? (

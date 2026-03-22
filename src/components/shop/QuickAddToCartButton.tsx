@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { ShoppingCart, Check } from "lucide-react";
+import { ShoppingCart, Check, LogIn } from "lucide-react";
+import { useAuth } from "@/hooks/useAuth";
 
 interface QuickAddToCartButtonProps {
   product: {
@@ -27,15 +28,25 @@ function getCart(merchantSlug: string) {
   }
 }
 
+const AUTH_URL = process.env.NEXT_PUBLIC_AUTH_URL || "https://auth.peeap.com";
+const STORE_URL = process.env.NEXT_PUBLIC_STORE_URL || "https://store.peeap.com";
+
 export default function QuickAddToCartButton({
   product,
   merchantSlug,
 }: QuickAddToCartButtonProps) {
+  const { user, loading: authLoading, login } = useAuth();
   const [added, setAdded] = useState(false);
 
   const handleAdd = (e: React.MouseEvent) => {
-    e.preventDefault(); // Prevent Link navigation
+    e.preventDefault();
     e.stopPropagation();
+
+    // Require login
+    if (!user && !authLoading) {
+      login(`${STORE_URL}/shop/${merchantSlug}`);
+      return;
+    }
 
     if (added) return;
 

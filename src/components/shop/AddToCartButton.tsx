@@ -1,8 +1,9 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { ShoppingCart, Plus, Minus, Check, Eye, CreditCard } from "lucide-react";
+import { ShoppingCart, Plus, Minus, Check, Eye, CreditCard, LogIn } from "lucide-react";
 import Link from "next/link";
+import { useAuth } from "@/hooks/useAuth";
 
 interface CartProduct {
   id: string;
@@ -52,6 +53,9 @@ function saveCart(merchantSlug: string, cart: CartItem[]) {
   }
 }
 
+const AUTH_URL = process.env.NEXT_PUBLIC_AUTH_URL || "https://auth.peeap.com";
+const STORE_URL = process.env.NEXT_PUBLIC_STORE_URL || "https://store.peeap.com";
+
 export default function AddToCartButton({
   product,
   merchantSlug,
@@ -59,6 +63,7 @@ export default function AddToCartButton({
   stockQuantity,
   trackInventory = false,
 }: AddToCartButtonProps) {
+  const { user, loading: authLoading, login } = useAuth();
   const [quantity, setQuantity] = useState(1);
   const [added, setAdded] = useState(false);
   const [existingQty, setExistingQty] = useState(0);
@@ -127,6 +132,28 @@ export default function AddToCartButton({
     hideTimerRef.current = setTimeout(() => setAdded(false), 3000);
   };
 
+  // Not logged in — show login button instead of add to cart
+  if (!authLoading && !user) {
+    return (
+      <div className="space-y-3">
+        <button
+          type="button"
+          onClick={() => {
+            const redirect = `${STORE_URL}/shop/${merchantSlug}`;
+            login(redirect);
+          }}
+          className="w-full flex items-center justify-center gap-2 px-6 py-3 rounded-lg font-semibold text-white bg-green-600 hover:bg-green-700 active:scale-[0.98] transition-all"
+        >
+          <LogIn className="w-5 h-5" />
+          Login to Add to Cart
+        </button>
+        <p className="text-xs text-gray-400 text-center">
+          Sign in with your Peeap account to shop
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-3">
       {/* Quantity selector */}
@@ -164,7 +191,7 @@ export default function AddToCartButton({
       <button
         type="button"
         onClick={handleAdd}
-        disabled={disabled || added}
+        disabled={disabled || added || authLoading}
         className={`w-full flex items-center justify-center gap-2 px-6 py-3 rounded-lg font-semibold text-white transition-all ${
           added
             ? "bg-green-500"
