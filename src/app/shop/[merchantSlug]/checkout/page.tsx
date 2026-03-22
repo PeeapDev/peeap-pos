@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
 import {
@@ -12,7 +12,11 @@ import {
   Wallet,
   AlertCircle,
   Lock,
+  LogIn,
+  User,
+  MapPin,
 } from "lucide-react";
+import { useAuth } from "@/hooks/useAuth";
 
 interface CartItem {
   product_id: string;
@@ -43,10 +47,15 @@ function clearCart(merchantSlug: string) {
   }
 }
 
+const STORE_URL = process.env.NEXT_PUBLIC_STORE_URL || "https://store.peeap.com";
+
 export default function CheckoutPage() {
   const params = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const merchantSlug = params.merchantSlug as string;
+
+  const { user, token, loading: authLoading, login, exchangeToken } = useAuth();
 
   const [items, setItems] = useState<CartItem[]>([]);
   const [mounted, setMounted] = useState(false);
@@ -55,39 +64,30 @@ export default function CheckoutPage() {
   const [storeId, setStoreId] = useState<string | null>(null);
   const [storeLoading, setStoreLoading] = useState(true);
   const [storeError, setStoreError] = useState<string | null>(null);
-  const [phoneError, setPhoneError] = useState<string | null>(null);
+  const [exchangingToken, setExchangingToken] = useState(false);
 
-  // Form state
-  const [customerName, setCustomerName] = useState("");
-  const [customerPhone, setCustomerPhone] = useState("");
-  const [customerEmail, setCustomerEmail] = useState("");
+  // Form state — only shipping address and notes (user info comes from profile)
+  const [deliveryAddress, setDeliveryAddress] = useState("");
   const [notes, setNotes] = useState("");
   const [paymentMethod, setPaymentMethod] = useState<
     "mobile_money" | "wallet"
   >("mobile_money");
 
-  // Phone number validation:
-  // Sierra Leone: +232 followed by 2 digits then 6 digits, or local 0xx xxxxxxx
-  // International: + followed by 7-15 digits
-  const validatePhone = (phone: string): boolean => {
-    const cleaned = phone.replace(/[\s\-()]/g, "");
-    // Sierra Leone formats
-    const slPattern = /^(\+232|232|0)(3[0-3]|7[6-8]|8[0-8]|2[0-9])\d{6}$/;
-    // Generic international format
-    const intlPattern = /^\+?\d{7,15}$/;
-    return slPattern.test(cleaned) || intlPattern.test(cleaned);
-  };
-
-  const handlePhoneChange = (value: string) => {
-    setCustomerPhone(value);
-    if (phoneError && value.trim()) {
-      // Clear error as user types if it looks like they're correcting
-      const cleaned = value.replace(/[\s\-()]/g, "");
-      if (cleaned.length >= 7) {
-        setPhoneError(validatePhone(value) ? null : phoneError);
-      }
+  // Handle auth callback — exchange ?token= code for session
+  useEffect(() => {
+    const code = searchParams.get("token");
+    if (code && !user && !authLoading) {
+      setExchangingToken(true);
+      exchangeToken(code).then((success) => {
+        setExchangingToken(false);
+        if (success) {
+          const url = new URL(window.location.href);
+          url.searchParams.delete("token");
+          window.history.replaceState({}, "", url.toString());
+        }
+      });
     }
-  };
+  }, [searchParams, user, authLoading, exchangeToken]);
 
   useEffect(() => {
     setMounted(true);
@@ -132,10 +132,19 @@ export default function CheckoutPage() {
   );
   const totalItems = items.reduce((sum, item) => sum + item.quantity, 0);
 
+  const handleLogin = () => {
+    const checkoutUrl = `${STORE_URL}/shop/${merchantSlug}/checkout`;
+    login(checkoutUrl);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    setPhoneError(null);
+
+    if (!user || !token) {
+      setError("You must be logged in to place an order.");
+      return;
+    }
 
     if (!storeId) {
       setError("Store information not available. Please try again.");
@@ -147,31 +156,29 @@ export default function CheckoutPage() {
       return;
     }
 
-    // Validate phone number
-    if (!validatePhone(customerPhone)) {
-      setPhoneError(
-        "Please enter a valid phone number. Examples: +232 76 123456, 076123456, or any international number."
-      );
-      return;
-    }
-
     setLoading(true);
 
     try {
       const res = await fetch("/api/checkout", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify({
           store_id: storeId,
-          customer_name: customerName.trim(),
-          customer_phone: customerPhone.trim(),
-          customer_email: customerEmail.trim() || undefined,
+          customer_name: user.name || user.email || user.phone || "Peeap User",
+          customer_phone: user.phone || "",
+          customer_email: user.email || undefined,
+          customer_id: user.id,
           items: items.map((item) => ({
             product_id: item.product_id,
             quantity: item.quantity,
           })),
           payment_method: paymentMethod,
           notes: notes.trim() || undefined,
+          delivery_address: deliveryAddress.trim() || undefined,
+          order_type: deliveryAddress.trim() ? "delivery" : "online",
         }),
       });
 
@@ -201,12 +208,14 @@ export default function CheckoutPage() {
     }
   };
 
-  if (!mounted || storeLoading) {
+  if (!mounted || storeLoading || authLoading || exchangingToken) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
           <Loader2 className="w-8 h-8 animate-spin text-green-600 mx-auto mb-3" />
-          <p className="text-gray-500">Loading checkout...</p>
+          <p className="text-gray-500">
+            {exchangingToken ? "Signing you in..." : "Loading checkout..."}
+          </p>
         </div>
       </div>
     );
@@ -264,16 +273,13 @@ export default function CheckoutPage() {
     );
   }
 
-  return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <div className="bg-white border-b">
-        <div className="max-w-5xl mx-auto px-4 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Link
-              href={`/shop/${merchantSlug}/cart`}
-              className="text-gray-600 hover:text-gray-900 transition-colors"
-            >
+  // Not logged in — show login prompt
+  if (!user) {
+    return (
+      <div className="min-h-screen bg-gray-50">
+        <div className="bg-white border-b">
+          <div className="max-w-5xl mx-auto px-4 py-4 flex items-center gap-3">
+            <Link href={`/shop/${merchantSlug}/cart`} className="text-gray-600 hover:text-gray-900">
               <ArrowLeft className="w-5 h-5" />
             </Link>
             <h1 className="text-xl font-bold text-gray-900 flex items-center gap-2">
@@ -281,10 +287,51 @@ export default function CheckoutPage() {
               Checkout
             </h1>
           </div>
-          <Link
-            href={`/shop/${merchantSlug}/cart`}
-            className="text-sm font-medium text-green-600 hover:text-green-700 transition-colors"
-          >
+        </div>
+        <div className="max-w-md mx-auto px-4 py-16 text-center">
+          <div className="bg-white rounded-2xl p-8 shadow-sm">
+            <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <LogIn className="w-8 h-8 text-green-600" />
+            </div>
+            <h2 className="text-xl font-bold text-gray-900 mb-2">Sign in to continue</h2>
+            <p className="text-gray-500 mb-6">
+              You need a Peeap account to place an order. Sign in to auto-fill your details and track your orders.
+            </p>
+            <div className="bg-gray-50 rounded-lg p-4 mb-6 text-left">
+              <p className="text-sm font-medium text-gray-700 mb-1">Your cart ({totalItems} {totalItems === 1 ? "item" : "items"})</p>
+              <p className="text-lg font-bold text-gray-900">NLe {subtotal.toLocaleString()}</p>
+            </div>
+            <button onClick={handleLogin} className="w-full bg-green-600 text-white py-3 rounded-lg font-semibold hover:bg-green-700 transition-colors flex items-center justify-center gap-2">
+              <LogIn className="w-5 h-5" />
+              Login with Peeap
+            </button>
+            <p className="text-xs text-gray-400 mt-4">
+              Don&apos;t have an account?{" "}
+              <a href={`${process.env.NEXT_PUBLIC_AUTH_URL || "https://auth.peeap.com"}/register?client=store&redirect=${encodeURIComponent(`${STORE_URL}/shop/${merchantSlug}/checkout`)}`} className="text-green-600 hover:underline">
+                Create one for free
+              </a>
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      {/* Header */}
+      <div className="bg-white border-b">
+        <div className="max-w-5xl mx-auto px-4 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Link href={`/shop/${merchantSlug}/cart`} className="text-gray-600 hover:text-gray-900 transition-colors">
+              <ArrowLeft className="w-5 h-5" />
+            </Link>
+            <h1 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+              <Lock className="w-5 h-5 text-green-600" />
+              Checkout
+            </h1>
+          </div>
+          <Link href={`/shop/${merchantSlug}/cart`} className="text-sm font-medium text-green-600 hover:text-green-700 transition-colors">
             Back to Cart
           </Link>
         </div>
@@ -301,92 +348,58 @@ export default function CheckoutPage() {
         <div className="grid lg:grid-cols-5 gap-6">
           {/* Checkout Form */}
           <div className="lg:col-span-3 space-y-6">
-            {/* Customer Info */}
+            {/* User Info (read-only from Peeap profile) */}
             <div className="bg-white rounded-lg p-6 shadow-sm">
-              <h2 className="text-lg font-semibold text-gray-900 mb-4">
-                Customer Information
+              <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                <User className="w-5 h-5 text-green-600" />
+                Your Information
               </h2>
+              <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-green-600 rounded-full flex items-center justify-center text-white font-semibold text-sm">
+                    {(user.name || user.email || "U").charAt(0).toUpperCase()}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium text-gray-900 truncate">{user.name || "Peeap User"}</p>
+                    <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-sm text-gray-600">
+                      {user.email && <span>{user.email}</span>}
+                      {user.phone && <span>{user.phone}</span>}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
 
+            {/* Shipping Address */}
+            <div className="bg-white rounded-lg p-6 shadow-sm">
+              <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                <MapPin className="w-5 h-5 text-green-600" />
+                Shipping Address
+              </h2>
               <div className="space-y-4">
                 <div>
-                  <label
-                    htmlFor="name"
-                    className="block text-sm font-medium text-gray-700 mb-1"
-                  >
-                    Full Name <span className="text-red-500">*</span>
+                  <label htmlFor="address" className="block text-sm font-medium text-gray-700 mb-1">
+                    Delivery Address <span className="text-gray-400 font-normal">(leave blank for pickup)</span>
                   </label>
-                  <input
-                    id="name"
-                    type="text"
-                    required
-                    value={customerName}
-                    onChange={(e) => setCustomerName(e.target.value)}
-                    placeholder="John Doe"
-                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none transition-colors"
+                  <textarea
+                    id="address"
+                    value={deliveryAddress}
+                    onChange={(e) => setDeliveryAddress(e.target.value)}
+                    placeholder="Enter your full delivery address..."
+                    rows={3}
+                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none transition-colors resize-none"
                   />
                 </div>
-
                 <div>
-                  <label
-                    htmlFor="phone"
-                    className="block text-sm font-medium text-gray-700 mb-1"
-                  >
-                    Phone Number <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    id="phone"
-                    type="tel"
-                    required
-                    value={customerPhone}
-                    onChange={(e) => handlePhoneChange(e.target.value)}
-                    placeholder="+232 76 123456"
-                    className={`w-full px-4 py-2.5 border rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none transition-colors ${
-                      phoneError
-                        ? "border-red-300 bg-red-50"
-                        : "border-gray-300"
-                    }`}
-                  />
-                  {phoneError && (
-                    <p className="text-sm text-red-600 mt-1">{phoneError}</p>
-                  )}
-                </div>
-
-                <div>
-                  <label
-                    htmlFor="email"
-                    className="block text-sm font-medium text-gray-700 mb-1"
-                  >
-                    Email{" "}
-                    <span className="text-gray-400 font-normal">
-                      (optional)
-                    </span>
-                  </label>
-                  <input
-                    id="email"
-                    type="email"
-                    value={customerEmail}
-                    onChange={(e) => setCustomerEmail(e.target.value)}
-                    placeholder="john@example.com"
-                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none transition-colors"
-                  />
-                </div>
-
-                <div>
-                  <label
-                    htmlFor="notes"
-                    className="block text-sm font-medium text-gray-700 mb-1"
-                  >
-                    Order Notes{" "}
-                    <span className="text-gray-400 font-normal">
-                      (optional)
-                    </span>
+                  <label htmlFor="notes" className="block text-sm font-medium text-gray-700 mb-1">
+                    Order Notes <span className="text-gray-400 font-normal">(optional)</span>
                   </label>
                   <textarea
                     id="notes"
                     value={notes}
                     onChange={(e) => setNotes(e.target.value)}
                     placeholder="Special instructions for your order..."
-                    rows={3}
+                    rows={2}
                     className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none transition-colors resize-none"
                   />
                 </div>

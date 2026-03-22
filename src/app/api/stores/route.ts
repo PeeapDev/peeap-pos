@@ -43,7 +43,7 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  // Public: discover stores
+  // Public: discover stores with marketplace filters
   const discover = searchParams.get("discover");
   if (discover === "true") {
     try {
@@ -52,14 +52,43 @@ export async function GET(request: NextRequest) {
         50
       );
       const offset = parseInt(searchParams.get("offset") || "0");
+      const city = searchParams.get("city");
+      const category = searchParams.get("category");
+      const featured = searchParams.get("featured");
+      const sort = searchParams.get("sort") || "newest";
 
-      const { data, error, count } = await supabase
+      let query = supabase
         .from("stores")
         .select("*", { count: "exact" })
-        .eq("is_published", true)
-        .order("created_at", { ascending: false })
-        .range(offset, offset + limit - 1);
+        .eq("is_published", true);
 
+      if (city) {
+        query = query.ilike("city", `%${city}%`);
+      }
+      if (category) {
+        query = query.contains("marketplace_category_ids", [category]);
+      }
+      if (featured === "true") {
+        query = query.eq("is_featured", true);
+      }
+
+      switch (sort) {
+        case "rating":
+          query = query.order("average_rating", { ascending: false });
+          break;
+        case "orders":
+          query = query.order("total_orders", { ascending: false });
+          break;
+        case "name":
+          query = query.order("name");
+          break;
+        default:
+          query = query.order("created_at", { ascending: false });
+      }
+
+      query = query.range(offset, offset + limit - 1);
+
+      const { data, error, count } = await query;
       if (error) throw error;
 
       return NextResponse.json(

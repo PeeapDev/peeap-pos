@@ -43,12 +43,16 @@ export async function POST(request: NextRequest) {
       items,
       payment_method,
       notes,
+      delivery_address,
+      delivery_city,
+      order_type,
+      customer_id,
     } = parsed.data;
 
     // Verify the store exists and is published
     const { data: store, error: storeError } = await supabase
       .from("stores")
-      .select("id, merchant_id, slug, name")
+      .select("id, merchant_id, slug, name, delivery_fee, free_delivery_minimum, offers_delivery, minimum_order")
       .eq("id", store_id)
       .eq("is_published", true)
       .single();
@@ -132,7 +136,21 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const totalAmount = subtotal + totalTax;
+    // Calculate delivery fee if applicable
+    let deliveryFee = 0;
+    const effectiveOrderType = order_type || "online";
+    if (effectiveOrderType === "delivery" && delivery_address) {
+      // Use store's delivery fee, unless order meets free delivery minimum
+      const storeDeliveryFee = (store as Record<string, unknown>).delivery_fee as number || 0;
+      const freeMin = (store as Record<string, unknown>).free_delivery_minimum as number;
+      if (freeMin && subtotal >= freeMin) {
+        deliveryFee = 0;
+      } else {
+        deliveryFee = storeDeliveryFee;
+      }
+    }
+
+    const totalAmount = subtotal + totalTax + deliveryFee;
     const orderNumber = generateOrderNumber();
 
     // Create the order
@@ -149,6 +167,11 @@ export async function POST(request: NextRequest) {
         tax_amount: totalTax,
         discount_amount: 0,
         total_amount: totalAmount,
+        delivery_fee: deliveryFee,
+        delivery_address: delivery_address || null,
+        delivery_city: delivery_city || null,
+        order_type: effectiveOrderType,
+        customer_id: customer_id || null,
         payment_method,
         status: "pending",
         notes: notes || null,

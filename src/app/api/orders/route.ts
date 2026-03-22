@@ -28,6 +28,8 @@ export async function GET(request: NextRequest) {
     const status = searchParams.get("status");
     const from = searchParams.get("from");
     const to = searchParams.get("to");
+    const customerId = searchParams.get("customer_id");
+    const orderType = searchParams.get("order_type");
 
     let query = supabase
       .from("store_orders")
@@ -38,6 +40,12 @@ export async function GET(request: NextRequest) {
 
     if (status && status !== "all") {
       query = query.eq("status", status);
+    }
+    if (customerId) {
+      query = query.eq("customer_id", customerId);
+    }
+    if (orderType) {
+      query = query.eq("order_type", orderType);
     }
     if (from) {
       query = query.gte("created_at", from);

@@ -34,18 +34,46 @@ export async function GET(request: NextRequest) {
         );
       }
 
-      const query = supabase
+      const sort = searchParams.get("sort") || "featured";
+      const minPrice = searchParams.get("min_price");
+      const maxPrice = searchParams.get("max_price");
+
+      let query = supabase
         .from("pos_products")
         .select("*, category:pos_categories(*)")
         .eq("merchant_id", store.merchant_id)
         .eq("is_active", true)
-        .eq("is_published", true)
-        .order("is_featured", { ascending: false })
-        .order("name");
+        .eq("is_published", true);
 
       const categoryId = searchParams.get("category");
       if (categoryId) {
-        query.eq("category_id", categoryId);
+        query = query.eq("category_id", categoryId);
+      }
+      if (minPrice) {
+        query = query.gte("price", parseFloat(minPrice));
+      }
+      if (maxPrice) {
+        query = query.lte("price", parseFloat(maxPrice));
+      }
+
+      switch (sort) {
+        case "price_asc":
+          query = query.order("price", { ascending: true });
+          break;
+        case "price_desc":
+          query = query.order("price", { ascending: false });
+          break;
+        case "newest":
+          query = query.order("created_at", { ascending: false });
+          break;
+        case "popular":
+          query = query.order("order_count", { ascending: false });
+          break;
+        case "rating":
+          query = query.order("average_rating", { ascending: false });
+          break;
+        default:
+          query = query.order("is_featured", { ascending: false }).order("name");
       }
 
       const { data, error } = await query;

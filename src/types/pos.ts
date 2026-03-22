@@ -56,6 +56,18 @@ export interface POSProduct {
   seo_title?: string;
   seo_description?: string;
   is_published?: boolean;
+  // Marketplace fields
+  marketplace_category_id?: string;
+  marketplace_category?: MarketplaceCategory;
+  view_count: number;
+  order_count: number;
+  images?: string[];
+  weight_grams?: number;
+  brand?: string;
+  average_rating: number;
+  total_ratings: number;
+  store?: Store;
+  reviews?: ProductReview[];
 }
 
 export interface POSSaleItem {
@@ -321,6 +333,25 @@ export interface Store {
   business_hours?: Record<string, string>;
   social_links?: Record<string, string>;
   is_published: boolean;
+  // Marketplace fields
+  city?: string;
+  country?: string;
+  latitude?: number;
+  longitude?: number;
+  is_verified: boolean;
+  is_featured: boolean;
+  marketplace_category_ids?: string[];
+  offers_delivery: boolean;
+  delivery_radius_km?: number;
+  delivery_fee: number;
+  free_delivery_minimum?: number;
+  minimum_order?: number;
+  preparation_time_minutes?: number;
+  average_rating: number;
+  total_ratings: number;
+  total_orders: number;
+  total_revenue: number;
+  tags?: string[];
   created_at: string;
   updated_at: string;
 }
@@ -348,6 +379,16 @@ export interface StoreOrder {
     | "cancelled";
   notes?: string;
   items: StoreOrderItem[];
+  // Marketplace delivery fields
+  order_type: "online" | "pickup" | "delivery";
+  delivery_address?: string;
+  delivery_city?: string;
+  delivery_fee: number;
+  service_fee: number;
+  estimated_delivery_time?: string;
+  customer_id?: string;
+  rating?: number;
+  review?: string;
   created_at: string;
   updated_at: string;
 }
@@ -360,4 +401,77 @@ export interface StoreOrderItem {
   quantity: number;
   unit_price: number;
   total_price: number;
+}
+
+// Marketplace types
+
+export interface MarketplaceCategory {
+  id: string;
+  name: string;
+  slug: string;
+  description?: string;
+  icon?: string;
+  image_url?: string;
+  color: string;
+  parent_id?: string;
+  sort_order: number;
+  product_count: number;
+  is_active: boolean;
+  children?: MarketplaceCategory[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MarketplaceBanner {
+  id: string;
+  title: string;
+  subtitle?: string;
+  image_url: string;
+  link_url?: string;
+  link_type: string;
+  link_target?: string;
+  sort_order: number;
+  is_active: boolean;
+  starts_at: string;
+  ends_at?: string;
+  created_at: string;
+}
+
+export interface ProductReview {
+  id: string;
+  product_id: string;
+  store_id: string;
+  customer_id?: string;
+  customer_name: string;
+  rating: number;
+  review_text?: string;
+  is_verified_purchase: boolean;
+  is_approved: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WishlistItem {
+  id: string;
+  user_id: string;
+  product_id: string;
+  store_id: string;
+  product?: POSProduct;
+  store?: Store;
+  created_at: string;
+}
+
+export interface MarketplaceHomepage {
+  banners: MarketplaceBanner[];
+  categories: MarketplaceCategory[];
+  trending_products: POSProduct[];
+  featured_stores: Store[];
+  new_arrivals: POSProduct[];
+}
+
+export interface MarketplaceSearchResult {
+  products: POSProduct[];
+  total: number;
+  page: number;
+  per_page: number;
 }

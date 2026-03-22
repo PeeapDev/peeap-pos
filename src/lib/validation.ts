@@ -216,11 +216,55 @@ export const checkoutItemSchema = z.object({
 export const checkoutSchema = z.object({
   store_id: z.string().uuid(),
   customer_name: z.string().min(1).max(255),
-  customer_phone: z.string().min(5).max(50),
+  customer_phone: z.string().max(50).default(""),
   customer_email: z.string().email().max(255).optional(),
   items: z.array(checkoutItemSchema).min(1),
   payment_method: z.enum(["mobile_money", "wallet"]),
   notes: z.string().max(2000).optional(),
+  // Delivery fields
+  order_type: z.enum(["online", "pickup", "delivery"]).default("online"),
+  delivery_address: z.string().max(500).optional(),
+  delivery_city: z.string().max(100).optional(),
+  customer_id: z.string().uuid().optional(),
+});
+
+// Marketplace Categories (admin)
+export const createMarketplaceCategorySchema = z.object({
+  name: z.string().min(1).max(255),
+  slug: z.string().min(1).max(100).regex(/^[a-z0-9-]+$/),
+  description: z.string().max(500).optional(),
+  icon: z.string().max(100).optional(),
+  image_url: z.string().url().optional(),
+  color: z.string().max(20).default("#3B82F6"),
+  parent_id: z.string().uuid().optional(),
+  sort_order: z.number().int().min(0).default(0),
+  is_active: z.boolean().default(true),
+});
+
+export const updateMarketplaceCategorySchema =
+  createMarketplaceCategorySchema.partial();
+
+// Marketplace Banners (admin)
+export const createBannerSchema = z.object({
+  title: z.string().min(1).max(255),
+  subtitle: z.string().max(500).optional(),
+  image_url: z.string().url(),
+  link_url: z.string().url().optional(),
+  link_type: z.enum(["url", "category", "store", "product"]).default("url"),
+  link_target: z.string().max(255).optional(),
+  sort_order: z.number().int().min(0).default(0),
+  is_active: z.boolean().default(true),
+  starts_at: z.string().optional(),
+  ends_at: z.string().optional(),
+});
+
+export const updateBannerSchema = createBannerSchema.partial();
+
+// Product Review
+export const createReviewSchema = z.object({
+  rating: z.number().int().min(1).max(5),
+  review_text: z.string().max(2000).optional(),
+  customer_name: z.string().max(255).optional(),
 });
 
 // AI Image Enhancement
