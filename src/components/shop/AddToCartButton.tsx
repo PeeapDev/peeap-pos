@@ -53,7 +53,7 @@ function saveCart(merchantSlug: string, cart: CartItem[]) {
   }
 }
 
-const AUTH_URL = process.env.NEXT_PUBLIC_AUTH_URL || "https://auth.peeap.com";
+const PEEAP_URL = process.env.NEXT_PUBLIC_PEEAP_URL || "https://my.peeap.com";
 const STORE_URL = process.env.NEXT_PUBLIC_STORE_URL || "https://store.peeap.com";
 
 export default function AddToCartButton({

@@ -14,7 +14,8 @@ interface User {
   merchant_id?: string;
 }
 
-const AUTH_URL = process.env.NEXT_PUBLIC_AUTH_URL || "https://auth.peeap.com";
+// Login happens on my.peeap.com — the main Peeap platform
+const PEEAP_URL = process.env.NEXT_PUBLIC_PEEAP_URL || "https://my.peeap.com";
 const STORE_URL = process.env.NEXT_PUBLIC_STORE_URL || "https://store.peeap.com";
 
 export function useAuth() {
@@ -36,9 +37,16 @@ export function useAuth() {
     setLoading(false);
   }, []);
 
+  /**
+   * Redirect to my.peeap.com/login for SSO authentication.
+   * After login, my.peeap.com will generate an SSO token and redirect back
+   * to the store with ?token=xxx in the URL.
+   */
   const login = useCallback((redirectBack?: string) => {
-    const redirect = redirectBack || `${STORE_URL}/dashboard`;
-    window.location.href = `${AUTH_URL}/login?client=store&redirect=${encodeURIComponent(redirect)}`;
+    const storeRedirect = redirectBack || `${STORE_URL}/shop`;
+    // my.peeap.com login accepts a redirect param — after login it will
+    // redirect back to our store URL with an SSO token appended
+    window.location.href = `${PEEAP_URL}/login?redirect=${encodeURIComponent(storeRedirect)}`;
   }, []);
 
   const logout = useCallback(() => {
@@ -55,16 +63,19 @@ export function useAuth() {
     setUser(u);
   }, []);
 
+  /**
+   * Exchange an SSO token (from ?token= URL param) for a user session.
+   * The SSO token is validated against the sso_tokens table via the store API.
+   */
   const exchangeToken = useCallback(async (code: string): Promise<boolean> => {
     try {
-      const res = await fetch(`${AUTH_URL}/api/auth/exchange`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code, client: "store" }),
-      });
+      // Call our own API to validate the SSO token and get user data
+      const res = await fetch(`/api/auth/sso?token=${encodeURIComponent(code)}`);
       if (!res.ok) return false;
 
       const data = await res.json();
+      if (!data.user) return false;
+
       const u: User = {
         id: data.user.id,
         email: data.user.email,
@@ -75,7 +86,7 @@ export function useAuth() {
         roles: data.user.roles,
       };
 
-      const accessToken = data.access_token || data.session_token;
+      const accessToken = data.token || code;
       localStorage.setItem("pos_token", accessToken);
       localStorage.setItem("pos_user", JSON.stringify(u));
       setToken(accessToken);

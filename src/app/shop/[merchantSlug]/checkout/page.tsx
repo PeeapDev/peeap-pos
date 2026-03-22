@@ -307,7 +307,7 @@ export default function CheckoutPage() {
             </button>
             <p className="text-xs text-gray-400 mt-4">
               Don&apos;t have an account?{" "}
-              <a href={`${process.env.NEXT_PUBLIC_AUTH_URL || "https://auth.peeap.com"}/register?client=store&redirect=${encodeURIComponent(`${STORE_URL}/shop/${merchantSlug}/checkout`)}`} className="text-green-600 hover:underline">
+              <a href={`${process.env.NEXT_PUBLIC_PEEAP_URL || "https://my.peeap.com"}/register?redirect=${encodeURIComponent(`${STORE_URL}/shop/${merchantSlug}/checkout`)}`} className="text-green-600 hover:underline">
                 Create one for free
               </a>
             </p>
