@@ -91,7 +91,7 @@ export async function POST(request: NextRequest) {
     const credential = `${R2_ACCESS_KEY}/${shortDate}/${region}/${service}/aws4_request`;
 
     // Create canonical request
-    const payloadHash = await sha256Hex(new Uint8Array(fileBuffer));
+    const payloadHash = await sha256Hex(fileBuffer);
     const canonicalHeaders =
       `content-type:${file.type}\n` +
       `host:${R2_ACCOUNT_ID}.r2.cloudflarestorage.com\n` +
@@ -166,18 +166,14 @@ export async function POST(request: NextRequest) {
 
 // ── AWS Signature V4 helpers ──
 
-async function sha256(data: Uint8Array): Promise<ArrayBuffer> {
-  return crypto.subtle.digest("SHA-256", data);
-}
-
-async function sha256Hex(data: Uint8Array): Promise<string> {
-  const hash = await sha256(data);
+async function sha256Hex(data: BufferSource): Promise<string> {
+  const hash = await crypto.subtle.digest("SHA-256", data);
   return Array.from(new Uint8Array(hash))
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
 }
 
-async function hmac(key: ArrayBuffer | Uint8Array, data: Uint8Array): Promise<ArrayBuffer> {
+async function hmac(key: BufferSource, data: BufferSource): Promise<ArrayBuffer> {
   const cryptoKey = await crypto.subtle.importKey(
     "raw",
     key,
@@ -188,7 +184,7 @@ async function hmac(key: ArrayBuffer | Uint8Array, data: Uint8Array): Promise<Ar
   return crypto.subtle.sign("HMAC", cryptoKey, data);
 }
 
-async function hmacHex(key: ArrayBuffer, data: Uint8Array): Promise<string> {
+async function hmacHex(key: BufferSource, data: BufferSource): Promise<string> {
   const sig = await hmac(key, data);
   return Array.from(new Uint8Array(sig))
     .map((b) => b.toString(16).padStart(2, "0"))

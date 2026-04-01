@@ -75,16 +75,7 @@ export async function POST(
         // Stock was only reserved, release reservation
         await releaseStock(stockItems);
       } else {
-        // Stock was committed, restore it
-        for (const item of stockItems) {
-          await supabase
-            .from("pos_products")
-            .update({
-              stock_quantity: supabase.rpc ? undefined : undefined, // handled below
-            })
-            .eq("id", item.product_id);
-        }
-        // Increment stock_quantity back
+        // Stock was committed — restore stock_quantity
         for (const item of stockItems) {
           const { data: product } = await supabase
             .from("pos_products")
