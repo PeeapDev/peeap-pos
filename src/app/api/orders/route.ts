@@ -3,6 +3,8 @@ import { authenticateRequest } from "@/lib/auth";
 import { corsHeaders, handleCORS } from "@/lib/cors";
 import { supabase } from "@/lib/supabase";
 import { updateOrderStatusSchema } from "@/lib/validation";
+import { notifyOrderStatusChanged } from "@/lib/notification-client";
+import { commitStock } from "@/lib/stock";
 
 export async function OPTIONS(request: NextRequest) {
   return handleCORS(request) || NextResponse.json({});
@@ -154,6 +156,31 @@ export async function PUT(request: NextRequest) {
       .single();
 
     if (updateError) throw updateError;
+
+    // Commit stock when order moves to paid/confirmed (for non-wallet payments)
+    if ((status === "paid" || status === "processing") && existing.status === "pending") {
+      try {
+        const { data: items } = await supabase
+          .from("store_order_items")
+          .select("product_id, quantity")
+          .eq("order_id", id);
+        if (items?.length) {
+          await commitStock(items.map((i) => ({ product_id: i.product_id, quantity: i.quantity })));
+        }
+      } catch (err) {
+        console.error("[Orders] Stock commit failed (non-blocking):", err);
+      }
+    }
+
+    // Send notification to customer on status change (non-blocking)
+    if (updated.customer_id && ["shipped", "delivered", "cancelled"].includes(status)) {
+      notifyOrderStatusChanged(
+        updated.customer_id,
+        updated.order_number,
+        status,
+        updated.store_name
+      ).catch(() => {});
+    }
 
     return NextResponse.json({ order: updated }, { headers });
   } catch (err) {

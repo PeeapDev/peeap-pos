@@ -452,13 +452,28 @@ export default function ProductsPage() {
                           if (!file || !token) return;
                           setUploadingImage(true);
                           try {
-                            const formData = new FormData();
-                            formData.append("file", file);
-                            // Use object URL as temporary preview
+                            // Show instant blob preview
                             const previewUrl = URL.createObjectURL(file);
                             updateField("image_url", previewUrl);
-                          } catch {
-                            // Silently fail, user can paste URL manually
+
+                            // Upload to Cloudflare Images
+                            const formData = new FormData();
+                            formData.append("file", file);
+                            const res = await fetch("/api/upload", {
+                              method: "POST",
+                              headers: { Authorization: `Bearer ${token}` },
+                              body: formData,
+                            });
+                            const data = await res.json();
+                            if (res.ok && data.url) {
+                              updateField("image_url", data.url);
+                              URL.revokeObjectURL(previewUrl);
+                            } else {
+                              console.error("Upload failed:", data.error);
+                              // Keep blob preview — user can still paste URL manually
+                            }
+                          } catch (err) {
+                            console.error("Upload error:", err);
                           } finally {
                             setUploadingImage(false);
                           }

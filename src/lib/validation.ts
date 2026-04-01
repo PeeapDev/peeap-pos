@@ -219,7 +219,7 @@ export const checkoutSchema = z.object({
   customer_phone: z.string().max(50).default(""),
   customer_email: z.string().email().max(255).optional(),
   items: z.array(checkoutItemSchema).min(1),
-  payment_method: z.enum(["mobile_money", "wallet"]),
+  payment_method: z.enum(["mobile_money", "wallet", "peeap_checkout", "card"]),
   notes: z.string().max(2000).optional(),
   // Delivery fields
   order_type: z.enum(["online", "pickup", "delivery"]).default("online"),
