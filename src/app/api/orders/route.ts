@@ -4,6 +4,7 @@ import { corsHeaders, handleCORS } from "@/lib/cors";
 import { supabase } from "@/lib/supabase";
 import { updateOrderStatusSchema } from "@/lib/validation";
 import { notifyOrderStatusChanged } from "@/lib/notification-client";
+import { sendOrderStatusUpdateToChat } from "@/lib/chat-client";
 import { commitStock } from "@/lib/stock";
 
 export async function OPTIONS(request: NextRequest) {
@@ -101,7 +102,7 @@ export async function PUT(request: NextRequest) {
     // Verify the order belongs to this merchant
     const { data: existing, error: fetchError } = await supabase
       .from("store_orders")
-      .select("id, merchant_id, status")
+      .select("id, merchant_id, status, store_id, order_number, customer_id, customer_name, total_amount")
       .eq("id", id)
       .single();
 
@@ -180,6 +181,68 @@ export async function PUT(request: NextRequest) {
         status,
         updated.store_name
       ).catch(() => {});
+    }
+
+    // Send chat message to buyer on status change (non-blocking)
+    if (existing.customer_id && ["paid", "processing", "shipped", "delivered", "cancelled"].includes(status)) {
+      // Look up store name for the chat message
+      const { data: store } = await supabase
+        .from("stores")
+        .select("name")
+        .eq("id", existing.store_id)
+        .single();
+
+      sendOrderStatusUpdateToChat({
+        order_id: existing.id,
+        order_number: existing.order_number,
+        store_id: existing.store_id,
+        store_name: store?.name || "Store",
+        buyer_user_id: existing.customer_id,
+        seller_user_id: existing.merchant_id,
+        customer_name: existing.customer_name || "there",
+        new_status: status,
+        total_amount: existing.total_amount,
+      }).catch(() => {});
+    }
+
+    // Cancel linked shipping job if order is cancelled
+    if (status === "cancelled") {
+      try {
+        // Release stock
+        const { data: orderItems } = await supabase
+          .from("store_order_items")
+          .select("product_id, quantity")
+          .eq("order_id", id);
+        if (orderItems?.length) {
+          const { releaseStock: releaseStockFn } = await import("@/lib/stock");
+          await releaseStockFn(orderItems.map((i) => ({ product_id: i.product_id, quantity: i.quantity })));
+        }
+
+        // Cancel shipping job via shipping API
+        const orderMeta = (updated.metadata || {}) as Record<string, any>;
+        const shippingJobNumber = orderMeta.shipping_job_number;
+        if (shippingJobNumber) {
+          const SHIPPING_API = process.env.SHIPPING_API_URL || "https://shipping.peeap.com";
+          const SVC_SECRET = process.env.SERVICE_SECRET || "";
+          // Look up the job ID by job number, then cancel it
+          const lookupRes = await fetch(`${SHIPPING_API}/api/deliveries?job_number=${shippingJobNumber}`, {
+            headers: { "X-Service-Secret": SVC_SECRET },
+          });
+          if (lookupRes.ok) {
+            const lookupData = await lookupRes.json();
+            const job = lookupData.deliveries?.[0];
+            if (job && !["completed", "cancelled"].includes(job.status)) {
+              fetch(`${SHIPPING_API}/api/deliveries/${job.id}`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json", "X-Service-Secret": SVC_SECRET },
+                body: JSON.stringify({ status: "cancelled", cancel_reason: "Order cancelled by merchant" }),
+              }).catch(() => {});
+            }
+          }
+        }
+      } catch (cancelErr) {
+        console.error("[Orders] Shipping cancellation failed (non-blocking):", cancelErr);
+      }
     }
 
     return NextResponse.json({ order: updated }, { headers });

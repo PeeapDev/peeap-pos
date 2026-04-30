@@ -36,11 +36,15 @@ interface Order {
   tax_amount: number;
   discount_amount: number;
   total_amount: number;
+  delivery_fee?: number;
   payment_method: string;
   payment_reference?: string;
   status: string;
   notes?: string;
   items: OrderItem[];
+  metadata?: Record<string, any>;
+  order_type?: string;
+  delivery_address?: string;
   created_at: string;
   updated_at: string;
 }
@@ -610,6 +614,69 @@ export default function OrdersPage() {
                   </span>
                 )}
               </div>
+
+              {/* Shipping Info */}
+              {selectedOrder.metadata?.shipping_job_number && (
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-2">
+                    Shipping
+                  </h3>
+                  <div className="bg-violet-50 rounded-lg p-3 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-gray-500">Tracking #</span>
+                      <a
+                        href={`https://shipping.peeap.com/track/${selectedOrder.metadata.shipping_job_number}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs font-mono text-violet-600 hover:underline"
+                      >
+                        {selectedOrder.metadata.shipping_job_number}
+                      </a>
+                    </div>
+                    {selectedOrder.metadata?.pickup_code ? (
+                      <div className="mt-2 rounded-lg border-2 border-violet-300 bg-white p-3">
+                        <div className="text-xs font-semibold uppercase tracking-wide text-violet-700">
+                          Pickup Code — give to rider
+                        </div>
+                        <div className="mt-1 font-mono text-3xl font-bold tracking-widest text-violet-900">
+                          {String(selectedOrder.metadata.pickup_code)}
+                        </div>
+                        <div className="mt-1 text-[11px] text-gray-500">
+                          The rider will ask for this 4-digit code when collecting the package.
+                        </div>
+                      </div>
+                    ) : null}
+                    {selectedOrder.metadata.shipping_status && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-gray-500">Shipping Status</span>
+                        <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
+                          selectedOrder.metadata.shipping_status === "completed" || selectedOrder.metadata.shipping_status === "delivered"
+                            ? "bg-green-100 text-green-700"
+                            : selectedOrder.metadata.shipping_status === "in_transit" || selectedOrder.metadata.shipping_status === "picked_up"
+                            ? "bg-blue-100 text-blue-700"
+                            : selectedOrder.metadata.shipping_status === "assigned"
+                            ? "bg-indigo-100 text-indigo-700"
+                            : "bg-gray-100 text-gray-600"
+                        }`}>
+                          {(selectedOrder.metadata.shipping_status as string).replace(/_/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase())}
+                        </span>
+                      </div>
+                    )}
+                    {selectedOrder.delivery_fee != null && selectedOrder.delivery_fee > 0 && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-gray-500">Delivery Fee</span>
+                        <span className="text-xs font-medium text-gray-700">NLe {Number(selectedOrder.delivery_fee).toLocaleString()}</span>
+                      </div>
+                    )}
+                    {selectedOrder.delivery_address && (
+                      <div className="flex items-start justify-between">
+                        <span className="text-xs text-gray-500">Ship to</span>
+                        <span className="text-xs text-gray-700 text-right max-w-[60%]">{selectedOrder.delivery_address}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
 
               {/* Notes */}
               {selectedOrder.notes && (

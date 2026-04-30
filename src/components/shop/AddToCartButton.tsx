@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { ShoppingCart, Plus, Minus, Check, Eye, CreditCard, LogIn } from "lucide-react";
+import { ShoppingCart, Plus, Minus, Check, Eye, CreditCard, LogIn, Loader2 } from "lucide-react";
 import Link from "next/link";
 import { useAuth } from "@/hooks/useAuth";
 
@@ -46,15 +46,11 @@ function saveCart(merchantSlug: string, cart: CartItem[]) {
   if (typeof window === "undefined") return;
   try {
     localStorage.setItem(getCartKey(merchantSlug), JSON.stringify(cart));
-    // Dispatch a custom event so other components (CartIcon) can react
     window.dispatchEvent(new CustomEvent("cart-updated", { detail: { merchantSlug } }));
   } catch {
     // localStorage might be full or unavailable
   }
 }
-
-const PEEAP_URL = process.env.NEXT_PUBLIC_PEEAP_URL || "https://my.peeap.com";
-const STORE_URL = process.env.NEXT_PUBLIC_STORE_URL || "https://store.peeap.com";
 
 export default function AddToCartButton({
   product,
@@ -63,11 +59,12 @@ export default function AddToCartButton({
   stockQuantity,
   trackInventory = false,
 }: AddToCartButtonProps) {
-  const { user, loading: authLoading, login } = useAuth();
+  const { user, loading: authLoading, loginPopup } = useAuth();
   const [quantity, setQuantity] = useState(1);
   const [added, setAdded] = useState(false);
   const [existingQty, setExistingQty] = useState(0);
   const [stockError, setStockError] = useState<string | null>(null);
+  const [loggingIn, setLoggingIn] = useState(false);
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -78,19 +75,15 @@ export default function AddToCartButton({
     }
   }, [merchantSlug, product.id]);
 
-  // Clean up timer on unmount
   useEffect(() => {
     return () => {
-      if (hideTimerRef.current) {
-        clearTimeout(hideTimerRef.current);
-      }
+      if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
     };
   }, []);
 
   const handleAdd = () => {
     setStockError(null);
 
-    // Client-side stock validation
     if (trackInventory && stockQuantity !== undefined) {
       const totalRequested = existingQty + quantity;
       if (totalRequested > stockQuantity) {
@@ -123,33 +116,32 @@ export default function AddToCartButton({
     setAdded(true);
     setQuantity(1);
 
-    // Clear any previous timer
-    if (hideTimerRef.current) {
-      clearTimeout(hideTimerRef.current);
-    }
-
-    // Auto-hide after 3 seconds
+    if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
     hideTimerRef.current = setTimeout(() => setAdded(false), 3000);
   };
 
-  // Not logged in — show login button instead of add to cart
+  const handleLoginAndAdd = async () => {
+    setLoggingIn(true);
+    await loginPopup();
+    setLoggingIn(false);
+  };
+
+  // Not logged in — show Add to Cart but trigger login popup first
   if (!authLoading && !user) {
     return (
       <div className="space-y-3">
         <button
           type="button"
-          onClick={() => {
-            const redirect = `${STORE_URL}/shop/${merchantSlug}`;
-            login(redirect);
-          }}
-          className="w-full flex items-center justify-center gap-2 px-6 py-3 rounded-lg font-semibold text-white bg-green-600 hover:bg-green-700 active:scale-[0.98] transition-all"
+          onClick={handleLoginAndAdd}
+          disabled={loggingIn || disabled}
+          className={`w-full flex items-center justify-center gap-2 px-6 py-3 rounded-xl font-semibold text-white transition-all active:scale-[0.98] ${disabled ? 'bg-gray-300 cursor-not-allowed' : loggingIn ? 'bg-emerald-400' : 'bg-emerald-600 hover:bg-emerald-700'}`}
         >
-          <LogIn className="w-5 h-5" />
-          Login to Add to Cart
+          {loggingIn ? (
+            <><Loader2 className="w-5 h-5 animate-spin" /> Signing in...</>
+          ) : (
+            <><ShoppingCart className="w-5 h-5" /> Add to Cart</>
+          )}
         </button>
-        <p className="text-xs text-gray-400 text-center">
-          Sign in with your Peeap account to shop
-        </p>
       </div>
     );
   }
@@ -192,12 +184,12 @@ export default function AddToCartButton({
         type="button"
         onClick={handleAdd}
         disabled={disabled || added || authLoading}
-        className={`w-full flex items-center justify-center gap-2 px-6 py-3 rounded-lg font-semibold text-white transition-all ${
+        className={`w-full flex items-center justify-center gap-2 px-6 py-3 rounded-xl font-semibold text-white transition-all ${
           added
-            ? "bg-green-500"
+            ? "bg-emerald-500"
             : disabled
             ? "bg-gray-300 cursor-not-allowed"
-            : "bg-green-600 hover:bg-green-700 active:scale-[0.98]"
+            : "bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98]"
         }`}
       >
         {added ? (
@@ -213,19 +205,19 @@ export default function AddToCartButton({
         )}
       </button>
 
-      {/* Post-add actions: View Cart and Checkout links */}
+      {/* Post-add actions */}
       {added && (
         <div className="flex gap-3 animate-in fade-in duration-200">
           <Link
             href={`/shop/${merchantSlug}/cart`}
-            className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg font-medium text-green-700 bg-green-50 border border-green-200 hover:bg-green-100 transition-colors text-sm"
+            className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 transition-colors text-sm"
           >
             <Eye className="w-4 h-4" />
             View Cart
           </Link>
           <Link
             href={`/shop/${merchantSlug}/checkout`}
-            className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg font-medium text-white bg-green-600 hover:bg-green-700 transition-colors text-sm"
+            className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg font-medium text-white bg-emerald-600 hover:bg-emerald-700 transition-colors text-sm"
           >
             <CreditCard className="w-4 h-4" />
             Checkout

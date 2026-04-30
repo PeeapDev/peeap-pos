@@ -134,6 +134,56 @@ export default async function OrderConfirmationPage({ params }: Props) {
             </dl>
           </div>
 
+          {/* Shipping Info */}
+          {(order.delivery_address || (order.metadata as any)?.shipping_job_number) && (
+            <div className="bg-white rounded-lg p-6 shadow-sm md:col-span-2">
+              <h3 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                <svg className="w-5 h-5 text-violet-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h1m8-1a1 1 0 01-1 1H9m4-1V8a1 1 0 011-1h2.586a1 1 0 01.707.293l3.414 3.414a1 1 0 01.293.707V16a1 1 0 01-1 1h-1m-6-1a1 1 0 001 1h1M5 17a2 2 0 104 0m-4 0a2 2 0 114 0m6 0a2 2 0 104 0m-4 0a2 2 0 114 0" />
+                </svg>
+                Delivery Information
+              </h3>
+              <dl className="space-y-3 text-sm">
+                {order.delivery_address && (
+                  <div className="flex justify-between">
+                    <dt className="text-gray-500">Deliver to</dt>
+                    <dd className="text-gray-900 text-right max-w-[60%]">{order.delivery_address}</dd>
+                  </div>
+                )}
+                {order.delivery_fee > 0 && (
+                  <div className="flex justify-between">
+                    <dt className="text-gray-500">Delivery Fee</dt>
+                    <dd className="text-gray-900">NLe {Number(order.delivery_fee).toLocaleString()}</dd>
+                  </div>
+                )}
+                {(order.metadata as any)?.shipping_job_number && (
+                  <div className="flex justify-between">
+                    <dt className="text-gray-500">Tracking Number</dt>
+                    <dd>
+                      <a
+                        href={`https://shipping.peeap.com/track/${(order.metadata as any).shipping_job_number}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="font-mono text-violet-600 hover:underline"
+                      >
+                        {(order.metadata as any).shipping_job_number}
+                      </a>
+                    </dd>
+                  </div>
+                )}
+                {(order.metadata as any)?.shipping_status && (
+                  <div className="flex justify-between">
+                    <dt className="text-gray-500">Shipping Status</dt>
+                    <dd className="capitalize font-medium text-gray-900">
+                      {((order.metadata as any).shipping_status as string).replace(/_/g, " ")}
+                    </dd>
+                  </div>
+                )}
+              </dl>
+              <p className="text-xs text-gray-400 mt-4">Your order will be delivered to your address. You'll receive a notification when it's on the way.</p>
+            </div>
+          )}
+
           {/* Items & Pricing */}
           <div className="bg-white rounded-lg p-6 shadow-sm">
             <h3 className="font-semibold text-gray-900 mb-4">Items</h3>
@@ -174,6 +224,12 @@ export default async function OrderConfirmationPage({ params }: Props) {
                 <div className="flex justify-between text-gray-600">
                   <span>Tax</span>
                   <span>NLe {order.tax_amount.toLocaleString()}</span>
+                </div>
+              )}
+              {order.delivery_fee > 0 && (
+                <div className="flex justify-between text-gray-600">
+                  <span>Delivery</span>
+                  <span>NLe {Number(order.delivery_fee).toLocaleString()}</span>
                 </div>
               )}
               {order.discount_amount > 0 && (

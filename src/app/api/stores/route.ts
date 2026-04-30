@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { authenticateRequest } from "@/lib/auth";
+import { authenticateRequest, authenticateServiceCall } from "@/lib/auth";
 import { corsHeaders, handleCORS } from "@/lib/cors";
 import { supabase } from "@/lib/supabase";
 import { createStoreSchema, updateStoreSchema } from "@/lib/validation";
@@ -133,12 +133,15 @@ export async function GET(request: NextRequest) {
 }
 
 // POST /api/stores — Create merchant store
+// Supports both JWT auth (direct merchant) and service secret (from my.peeap.com API proxy)
 export async function POST(request: NextRequest) {
   const origin = request.headers.get("origin");
   const headers = corsHeaders(origin);
 
   const auth = await authenticateRequest(request);
-  if (!auth) {
+  const isService = authenticateServiceCall(request);
+
+  if (!auth && !isService) {
     return NextResponse.json(
       { error: "Unauthorized" },
       { status: 401, headers }
@@ -146,21 +149,32 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    const body = await request.json();
+
+    // Use merchant_id from body for service calls, auth.sub for JWT
+    const merchantId = isService ? (body.merchant_id || auth?.sub) : auth!.sub;
+
+    if (!merchantId) {
+      return NextResponse.json(
+        { error: "merchant_id is required" },
+        { status: 400, headers }
+      );
+    }
+
     // Check if merchant already has a store
     const { data: existing } = await supabase
       .from("stores")
       .select("id")
-      .eq("merchant_id", auth.sub)
+      .eq("merchant_id", merchantId)
       .single();
 
     if (existing) {
       return NextResponse.json(
-        { error: "Store already exists" },
+        { error: "Store already exists", store: existing },
         { status: 409, headers }
       );
     }
 
-    const body = await request.json();
     const parsed = createStoreSchema.safeParse(body);
     if (!parsed.success) {
       return NextResponse.json(
@@ -185,7 +199,7 @@ export async function POST(request: NextRequest) {
 
     const { data, error } = await supabase
       .from("stores")
-      .insert({ ...parsed.data, merchant_id: auth.sub })
+      .insert({ ...parsed.data, merchant_id: merchantId })
       .select()
       .single();
 
@@ -207,7 +221,9 @@ export async function PUT(request: NextRequest) {
   const headers = corsHeaders(origin);
 
   const auth = await authenticateRequest(request);
-  if (!auth) {
+  const isService = authenticateServiceCall(request);
+
+  if (!auth && !isService) {
     return NextResponse.json(
       { error: "Unauthorized" },
       { status: 401, headers }
@@ -224,6 +240,8 @@ export async function PUT(request: NextRequest) {
       );
     }
 
+    const merchantId = isService ? (parsed.data as any).merchant_id || auth?.sub : auth!.sub;
+
     // If slug changed, check uniqueness
     if (parsed.data.slug) {
       const { data: slugExists } = await supabase
@@ -232,7 +250,7 @@ export async function PUT(request: NextRequest) {
         .eq("slug", parsed.data.slug)
         .single();
 
-      if (slugExists && slugExists.merchant_id !== auth.sub) {
+      if (slugExists && slugExists.merchant_id !== merchantId) {
         return NextResponse.json(
           { error: "Slug already taken" },
           { status: 409, headers }
@@ -243,7 +261,7 @@ export async function PUT(request: NextRequest) {
     const { data, error } = await supabase
       .from("stores")
       .update({ ...parsed.data, updated_at: new Date().toISOString() })
-      .eq("merchant_id", auth.sub)
+      .eq("merchant_id", merchantId)
       .select()
       .single();
 

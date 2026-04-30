@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { corsHeaders, handleCORS } from "@/lib/cors";
 import { supabase } from "@/lib/supabase";
+import { creditWallet } from "@/lib/api-client";
+import { commitStock } from "@/lib/stock";
 
 const API_BASE_URL =
   process.env.API_BASE_URL || "https://api.peeap.com";
@@ -11,40 +13,97 @@ export async function OPTIONS(request: NextRequest) {
 }
 
 /**
- * Check Peeap checkout session status and sync order if payment is complete.
+ * Check Peeap checkout session status and settle order if payment is complete.
+ * Handles both peeap_checkout (cs_ prefix) and mobile_money payment refs.
+ * Settlement = update status + credit merchant + commit stock.
  */
 async function syncCheckoutStatus(order: Record<string, unknown>) {
   const paymentRef = order.payment_reference as string | undefined;
-  if (!paymentRef || !paymentRef.startsWith("cs_")) return null;
+  if (!paymentRef) return null;
 
   try {
-    // Fetch checkout session from Peeap API
-    const res = await fetch(`${API_BASE_URL}/api/checkout/sessions/${paymentRef}`, {
-      headers: {
-        "X-Service-Secret": SERVICE_SECRET,
-      },
-    });
+    // Try checkout session lookup (cs_ prefix) or payment code lookup
+    let sessionStatus: string | null = null;
 
-    if (!res.ok) return null;
+    if (paymentRef.startsWith("cs_")) {
+      const res = await fetch(`${API_BASE_URL}/api/checkout/sessions/${paymentRef}`, {
+        headers: { "X-Service-Secret": SERVICE_SECRET },
+      });
+      if (!res.ok) return null;
+      const data = await res.json();
+      sessionStatus = data.session?.status || data.status;
+    } else {
+      // Try payment code / generic payment status lookup
+      const res = await fetch(`${API_BASE_URL}/api/payments/${paymentRef}/status`, {
+        headers: { "X-Service-Secret": SERVICE_SECRET },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        sessionStatus = data.status;
+      }
+    }
 
-    const data = await res.json();
-    const sessionStatus = data.session?.status || data.status;
+    if (!sessionStatus) return null;
 
-    if (sessionStatus === "COMPLETE" || sessionStatus === "completed") {
-      // Payment complete — update order to "paid"
-      await supabase
+    const isComplete = ["COMPLETE", "completed", "PAID", "paid", "succeeded"].includes(sessionStatus);
+    const isCancelled = ["CANCELLED", "EXPIRED", "cancelled", "expired", "failed"].includes(sessionStatus);
+
+    if (isComplete) {
+      // Settle: update status + credit merchant + commit stock
+      const { error: updateErr } = await supabase
         .from("store_orders")
         .update({
           status: "paid",
           updated_at: new Date().toISOString(),
         })
         .eq("id", order.id)
-        .eq("status", "pending"); // Only update if still pending
+        .eq("status", "pending"); // Only update if still pending (idempotent)
+
+      if (updateErr) return null; // Another process may have settled it
+
+      // Credit merchant wallet
+      const merchantId = order.merchant_id as string;
+      const totalAmount = order.total_amount as number;
+      const orderNumber = order.order_number as string;
+      if (merchantId && totalAmount > 0) {
+        const creditResult = await creditWallet(
+          merchantId,
+          totalAmount,
+          `Sale: Order ${orderNumber}`,
+          order.id as string
+        );
+        if (creditResult.error) {
+          console.error(`[Settlement] Merchant credit failed for ${orderNumber}:`, creditResult.error);
+          // Flag for reconciliation but don't roll back — payment is confirmed
+          await supabase.from("store_orders").update({
+            metadata: {
+              ...(order.metadata as Record<string, unknown> || {}),
+              reconciliation_needed: true,
+              reconciliation_reason: "settlement_merchant_credit_failed",
+            },
+          }).eq("id", order.id);
+        }
+      }
+
+      // Commit stock reservation
+      const { data: orderItems } = await supabase
+        .from("store_order_items")
+        .select("product_id, quantity")
+        .eq("order_id", order.id);
+
+      if (orderItems && orderItems.length > 0) {
+        await commitStock(orderItems.map((i) => ({
+          product_id: i.product_id,
+          quantity: i.quantity,
+        }))).catch((err: unknown) =>
+          console.error(`[Settlement] Stock commit failed for ${orderNumber}:`, err)
+        );
+      }
 
       return "paid";
     }
 
-    if (sessionStatus === "CANCELLED" || sessionStatus === "EXPIRED") {
+    if (isCancelled) {
       await supabase
         .from("store_orders")
         .update({

@@ -6,6 +6,7 @@ import Link from "next/link";
 import AddToCartButton from "@/components/shop/AddToCartButton";
 import BuyNowButton from "@/components/shop/BuyNowButton";
 import CartIcon from "@/components/shop/CartIcon";
+import ShopUserButton from "@/components/shop/ShopUserButton";
 
 const STORE_URL =
   process.env.NEXT_PUBLIC_STORE_URL || "https://store.peeap.com";
@@ -43,7 +44,18 @@ async function getStoreAndProduct(merchantSlug: string, productSlug: string) {
     .eq("is_published", true)
     .single();
 
-  return { store, product };
+  // Fetch similar products from same store
+  const { data: similarProducts } = await supabase
+    .from("pos_products")
+    .select("id, name, slug, price, image_url, stock_quantity, track_inventory")
+    .eq("merchant_id", store.merchant_id)
+    .eq("is_active", true)
+    .eq("is_published", true)
+    .neq("id", product?.id || "")
+    .order("order_count", { ascending: false })
+    .limit(8);
+
+  return { store, product, similarProducts: (similarProducts || []) as any[] };
 }
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
@@ -74,7 +86,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 }
 
 export default async function ProductPage({ params }: Props) {
-  const { store, product } = await getStoreAndProduct(
+  const { store, product, similarProducts = [] } = await getStoreAndProduct(
     params.merchantSlug,
     params.productSlug
   );
@@ -147,12 +159,7 @@ export default async function ProductPage({ params }: Props) {
               <span className="mx-2">/</span>
               <span className="text-gray-900">{product.name}</span>
             </div>
-            <Link
-              href={`/shop/${params.merchantSlug}/cart`}
-              className="text-sm font-medium text-green-600 hover:text-green-700 transition-colors"
-            >
-              View Cart
-            </Link>
+            <ShopUserButton merchantSlug={params.merchantSlug} />
           </div>
         </div>
 
@@ -235,6 +242,26 @@ export default async function ProductPage({ params }: Props) {
                 )}
               </div>
 
+              {/* Delivery Info */}
+              {store.offers_delivery && (
+                <div className="mt-5 bg-gradient-to-r from-violet-50 to-indigo-50 border border-violet-200 rounded-xl p-3.5">
+                  <div className="flex items-center gap-2 text-violet-800 font-semibold text-sm">
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h1m8-1a1 1 0 01-1 1H9m4-1V8a1 1 0 011-1h2.586a1 1 0 01.707.293l3.414 3.414a1 1 0 01.293.707V16a1 1 0 01-1 1h-1m-6-1a1 1 0 001 1h1M5 17a2 2 0 104 0m-4 0a2 2 0 114 0m6 0a2 2 0 104 0m-4 0a2 2 0 114 0" />
+                    </svg>
+                    Get it delivered to your door
+                  </div>
+                  <p className="text-xs text-violet-600 mt-1">
+                    {store.free_delivery_minimum && product.price >= store.free_delivery_minimum
+                      ? "Free delivery on this item!"
+                      : store.delivery_fee > 0
+                        ? `Delivery from NLe ${Number(store.delivery_fee).toLocaleString()} — arrives in minutes`
+                        : "Free delivery — arrives in minutes"
+                    }
+                  </p>
+                </div>
+              )}
+
               {/* Add to Cart + Buy Now */}
               <div className="mt-6 space-y-3">
                 <AddToCartButton
@@ -315,6 +342,61 @@ export default async function ProductPage({ params }: Props) {
             </div>
           </div>
         </div>
+        {/* More from this store */}
+        {similarProducts.length > 0 && (
+          <div className="max-w-6xl mx-auto mt-12 px-4 pb-8">
+            <h2 className="text-xl font-bold text-gray-900 mb-6">
+              More from {store.name}
+            </h2>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+              {similarProducts.map((sp: any) => {
+                const spOutOfStock = sp.track_inventory && sp.stock_quantity <= 0;
+                return (
+                  <Link
+                    key={sp.id}
+                    href={`/shop/${params.merchantSlug}/${sp.slug}`}
+                    className="group bg-white rounded-xl border border-gray-200 overflow-hidden hover:shadow-lg transition-shadow"
+                  >
+                    <div className="aspect-square bg-gray-100 relative overflow-hidden">
+                      {sp.image_url ? (
+                        <Image
+                          src={sp.image_url}
+                          alt={sp.name}
+                          fill
+                          className="object-cover group-hover:scale-105 transition-transform duration-300"
+                          sizes="(max-width: 640px) 50vw, 25vw"
+                        />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center text-gray-300 text-4xl">
+                          <svg className="w-12 h-12" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" /></svg>
+                        </div>
+                      )}
+                      {spOutOfStock && (
+                        <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                          <span className="bg-red-600 text-white text-xs font-bold px-3 py-1 rounded-full">Out of Stock</span>
+                        </div>
+                      )}
+                      {store.offers_delivery && (
+                        <div className="absolute top-2 right-2 bg-violet-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
+                          Delivery
+                        </div>
+                      )}
+                    </div>
+                    <div className="p-3">
+                      <h3 className="text-sm font-medium text-gray-900 line-clamp-2 group-hover:text-emerald-600 transition-colors">
+                        {sp.name}
+                      </h3>
+                      <p className="text-sm font-bold text-emerald-600 mt-1">
+                        NLe {Number(sp.price).toLocaleString()}
+                      </p>
+                    </div>
+                  </Link>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         <CartIcon merchantSlug={params.merchantSlug} />
       </div>
     </>

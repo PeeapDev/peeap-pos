@@ -82,6 +82,15 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    // Create a persistent session token for store API calls
+    const sessionToken = crypto.randomUUID() + crypto.randomUUID().replace(/-/g, '');
+    await supabase.from('sso_tokens').insert({
+      user_id: user.id,
+      token: sessionToken,
+      expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), // 30 days
+      redirect_path: '/store-session',
+    });
+
     return NextResponse.json({
       user: {
         id: user.id,
@@ -91,7 +100,7 @@ export async function GET(request: NextRequest) {
         last_name: user.last_name,
         roles: user.roles,
       },
-      token: ssoToken.token,
+      token: sessionToken,
       redirect_path: ssoToken.redirect_path,
     });
   } catch (err) {

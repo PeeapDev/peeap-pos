@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ShoppingCart, Check, LogIn } from "lucide-react";
+import { ShoppingCart, Check, LogIn, Loader2 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 
 interface QuickAddToCartButtonProps {
@@ -28,23 +28,23 @@ function getCart(merchantSlug: string) {
   }
 }
 
-const PEEAP_URL = process.env.NEXT_PUBLIC_PEEAP_URL || "https://my.peeap.com";
-const STORE_URL = process.env.NEXT_PUBLIC_STORE_URL || "https://store.peeap.com";
-
 export default function QuickAddToCartButton({
   product,
   merchantSlug,
 }: QuickAddToCartButtonProps) {
-  const { user, loading: authLoading, login } = useAuth();
+  const { user, loading: authLoading, loginPopup } = useAuth();
   const [added, setAdded] = useState(false);
+  const [loggingIn, setLoggingIn] = useState(false);
 
-  const handleAdd = (e: React.MouseEvent) => {
+  const handleAdd = async (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
 
-    // Require login
+    // Require login via popup
     if (!user && !authLoading) {
-      login(`${STORE_URL}/shop/${merchantSlug}`);
+      setLoggingIn(true);
+      await loginPopup();
+      setLoggingIn(false);
       return;
     }
 
@@ -84,15 +84,22 @@ export default function QuickAddToCartButton({
     <button
       type="button"
       onClick={handleAdd}
+      disabled={loggingIn}
       className={`absolute bottom-2 right-2 p-2 rounded-full shadow-md transition-all z-10 ${
-        added
-          ? "bg-green-500 text-white scale-110"
-          : "bg-white text-gray-700 hover:bg-green-600 hover:text-white hover:scale-110 opacity-0 group-hover:opacity-100"
+        loggingIn
+          ? "bg-emerald-100 text-emerald-600 scale-110"
+          : added
+          ? "bg-emerald-500 text-white scale-110"
+          : "bg-white text-gray-700 hover:bg-emerald-600 hover:text-white hover:scale-110 opacity-0 group-hover:opacity-100"
       }`}
-      title={added ? "Added!" : "Add to Cart"}
+      title={loggingIn ? "Signing in..." : added ? "Added!" : user ? "Add to Cart" : "Sign in to add"}
     >
-      {added ? (
+      {loggingIn ? (
+        <Loader2 className="w-4 h-4 animate-spin" />
+      ) : added ? (
         <Check className="w-4 h-4" />
+      ) : !user && !authLoading ? (
+        <LogIn className="w-4 h-4" />
       ) : (
         <ShoppingCart className="w-4 h-4" />
       )}

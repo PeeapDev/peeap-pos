@@ -72,6 +72,8 @@ interface CreateDeliveryParams {
 interface DeliveryResult {
   delivery: Record<string, unknown>;
   job_number: string;
+  pickup_code?: string;
+  delivery_code?: string;
 }
 
 export async function createDeliveryJob(
@@ -115,9 +117,12 @@ export async function createDeliveryJob(
     }
 
     const data = await res.json();
+    const deliveryObj = (data.delivery || {}) as Record<string, unknown>;
     return {
       delivery: data.delivery || data,
-      job_number: data.job_number || data.delivery?.job_number || "",
+      job_number: data.job_number || (deliveryObj.job_number as string) || "",
+      pickup_code: data.pickup_code || (deliveryObj.pickup_code as string) || undefined,
+      delivery_code: data.delivery_code || (deliveryObj.delivery_code as string) || undefined,
     };
   } catch (err) {
     console.error("[ShippingClient] createDeliveryJob failed:", err);

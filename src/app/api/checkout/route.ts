@@ -6,6 +6,7 @@ import { initiatePayment, debitWallet, creditWallet } from "@/lib/api-client";
 import { getShippingQuote, createDeliveryJob } from "@/lib/shipping-client";
 import { reserveStock, commitStock, releaseStock } from "@/lib/stock";
 import { sendNotification, notifyOrderConfirmed, notifyNewOrder } from "@/lib/notification-client";
+import { sendOrderReceiptToChat } from "@/lib/chat-client";
 
 const STORE_URL =
   process.env.NEXT_PUBLIC_STORE_URL || "https://store.peeap.com";
@@ -60,7 +61,7 @@ export async function POST(request: NextRequest) {
     // Verify the store exists and is published
     const { data: store, error: storeError } = await supabase
       .from("stores")
-      .select("id, merchant_id, slug, name, delivery_fee, free_delivery_minimum, offers_delivery, minimum_order, address, city")
+      .select("id, merchant_id, slug, name, delivery_fee, free_delivery_minimum, offers_delivery, minimum_order, address, city, logo_url, phone")
       .eq("id", store_id)
       .eq("is_published", true)
       .single();
@@ -112,6 +113,9 @@ export async function POST(request: NextRequest) {
       quantity: number;
       unit_price: number;
       total_price: number;
+      image_url?: string | null;
+      tax_rate?: number;
+      tax_amount?: number;
     }> = [];
 
     for (const item of items) {
@@ -141,6 +145,9 @@ export async function POST(request: NextRequest) {
         quantity: item.quantity,
         unit_price: product.price,
         total_price: itemTotal,
+        image_url: product.image_url || null,
+        tax_rate: product.tax_rate || 0,
+        tax_amount: itemTax,
       });
     }
 
@@ -148,13 +155,30 @@ export async function POST(request: NextRequest) {
     let deliveryFee = 0;
     const effectiveOrderType = order_type || "online";
     if (effectiveOrderType === "delivery" && delivery_address) {
-      // Use store's delivery fee, unless order meets free delivery minimum
+      // Use store's delivery fee as default
       const storeDeliveryFee = (store as Record<string, unknown>).delivery_fee as number || 0;
       const freeMin = (store as Record<string, unknown>).free_delivery_minimum as number;
       if (freeMin && subtotal >= freeMin) {
         deliveryFee = 0;
       } else {
         deliveryFee = storeDeliveryFee;
+      }
+
+      // Try dynamic shipping quote BEFORE payment — overrides store fee if available
+      const storeCity = (store as Record<string, unknown>).city as string || "";
+      if (delivery_city && storeCity) {
+        try {
+          const quote = await getShippingQuote({
+            pickup_city: storeCity,
+            delivery_city: delivery_city,
+            package_size: "medium",
+          });
+          if (quote?.fee) {
+            deliveryFee = quote.fee;
+          }
+        } catch {
+          // Fall back to store's fee if quote fails
+        }
       }
     }
 
@@ -304,15 +328,58 @@ export async function POST(request: NextRequest) {
       );
 
       if (debitResult.data?.transaction_id) {
-        // Credit merchant
-        await creditWallet(
+        // Credit merchant — if this fails after debit succeeded, the buyer
+        // loses money. Compensating refund protects against that.
+        const creditResult = await creditWallet(
           store.merchant_id,
           totalAmount,
           `Sale: Order ${orderNumber}`,
           order.id
-        ).catch((err) => console.error("Merchant credit failed:", err));
+        );
 
-        // Mark order as paid
+        if (creditResult.error) {
+          // Merchant credit failed — attempt compensating refund to buyer
+          console.error(`[WALLET] Merchant credit failed for order ${orderNumber}:`, creditResult.error);
+          const refundResult = await creditWallet(
+            customer_id,
+            totalAmount,
+            `Refund: merchant credit failed for ${orderNumber}`,
+            `refund-${order.id}`
+          );
+
+          if (refundResult.error) {
+            // Both credit AND refund failed — flag for manual reconciliation
+            console.error(`[CRITICAL] Refund also failed for order ${orderNumber}:`, refundResult.error);
+            await supabase
+              .from("store_orders")
+              .update({
+                status: "pending",
+                metadata: {
+                  ...(order.metadata as Record<string, unknown> || {}),
+                  reconciliation_needed: true,
+                  reconciliation_reason: "buyer_debited_merchant_credit_failed_refund_failed",
+                  debit_transaction_id: debitResult.data.transaction_id,
+                  failed_at: new Date().toISOString(),
+                },
+                updated_at: new Date().toISOString(),
+              })
+              .eq("id", order.id);
+          } else {
+            // Buyer refunded successfully — order stays pending, buyer can retry
+            await supabase
+              .from("store_orders")
+              .update({ status: "pending", updated_at: new Date().toISOString() })
+              .eq("id", order.id);
+          }
+
+          await releaseStock(stockItems);
+          return NextResponse.json(
+            { error: "Payment processing failed. Your wallet has been refunded. Please try again." },
+            { status: 500, headers }
+          );
+        }
+
+        // Both debit + credit succeeded — confirm order
         await supabase
           .from("store_orders")
           .update({
@@ -341,23 +408,7 @@ export async function POST(request: NextRequest) {
     // --- Post-order: Shipping job creation (non-blocking) ---
     if (effectiveOrderType === "delivery" && delivery_address) {
       try {
-        // Try dynamic shipping quote first
         const storeCity = (store as Record<string, unknown>).city as string || "";
-        if (delivery_city && storeCity) {
-          const quote = await getShippingQuote({
-            pickup_city: storeCity,
-            delivery_city: delivery_city,
-            package_size: "medium",
-          });
-          if (quote?.fee && quote.fee !== deliveryFee) {
-            deliveryFee = quote.fee;
-            const newTotal = subtotal + totalTax + deliveryFee;
-            await supabase.from("store_orders").update({
-              delivery_fee: deliveryFee,
-              total_amount: newTotal,
-            }).eq("id", order.id);
-          }
-        }
 
         // Create delivery job
         const shippingResult = await createDeliveryJob({
@@ -375,10 +426,25 @@ export async function POST(request: NextRequest) {
           package_description: `Order ${orderNumber} - ${items.length} item(s)`,
           package_size: "medium",
           items: orderItems,
+          metadata: {
+            store_id,
+            store_name: store.name,
+            order_number: orderNumber,
+            merchant_phone: (store as any).phone || undefined,
+          },
         });
         if (shippingResult?.job_number) {
+          // Merge into existing metadata — do not overwrite.
+          // Store pickup_code for the vendor dashboard. delivery_code is
+          // intentionally NOT persisted here — it's the buyer's private channel
+          // delivered via notification/SMS only.
+          const existingMetadata = (order.metadata as Record<string, unknown>) || {};
           await supabase.from("store_orders").update({
-            metadata: { shipping_job_number: shippingResult.job_number },
+            metadata: {
+              ...existingMetadata,
+              shipping_job_number: shippingResult.job_number,
+              pickup_code: shippingResult.pickup_code,
+            },
           }).eq("id", order.id);
         }
       } catch (err) {
@@ -394,6 +460,30 @@ export async function POST(request: NextRequest) {
       notifyNewOrder(store.merchant_id, orderNumber, customer_name, totalAmount).catch(() => {});
     } catch {
       // Notifications are non-blocking
+    }
+
+    // --- Post-order: Send receipt via chat (non-blocking) ---
+    if (customer_id) {
+      sendOrderReceiptToChat({
+        order_id: order.id,
+        order_number: orderNumber,
+        store_id,
+        store_name: store.name,
+        buyer_user_id: customer_id,
+        seller_user_id: store.merchant_id,
+        customer_name,
+        items: orderItems,
+        subtotal,
+        tax_amount: totalTax,
+        delivery_fee: deliveryFee,
+        total_amount: totalAmount,
+        payment_method,
+        order_type: effectiveOrderType,
+        delivery_address: delivery_address || undefined,
+        store_logo_url: (store as any).logo_url || undefined,
+        store_address: (store as any).address || undefined,
+        store_phone: (store as any).phone || undefined,
+      }).catch(() => {});
     }
 
     // Return the order with items
