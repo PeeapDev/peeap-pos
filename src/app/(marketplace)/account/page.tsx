@@ -45,7 +45,7 @@ export default function AccountPage() {
             Sign in with your Peeap account to access your orders and wishlist.
           </p>
           <a
-            href="https://auth.peeap.com/login?redirect=https://store.peeap.com/account"
+            href="https://my.peeap.com/login?next=https%3A%2F%2Fstore.peeap.com%2Faccount"
             className="inline-flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700"
           >
             <LogIn className="w-4 h-4" />

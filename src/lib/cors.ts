@@ -6,7 +6,6 @@ const DEFAULT_ORIGINS = [
   "https://checkout.peeap.com",
   "https://school.peeap.com",
   "https://plus.peeap.com",
-  "https://auth.peeap.com",
   "http://localhost:5173",
   "http://localhost:5175",
   "http://localhost:3000",
