@@ -1,9 +1,17 @@
 /**
- * Stock Reservation System
- * Provides atomic stock operations for the checkout flow:
- * - reserveStock: Hold stock when order is created (before payment)
- * - commitStock: Finalize stock deduction when payment succeeds
- * - releaseStock: Release reserved stock when order is cancelled/expired
+ * Stock Reservation System — atomic via Postgres RPCs.
+ *
+ * Provides race-free stock operations for the checkout flow:
+ *  - reserveStock: Hold stock when order is created (before payment)
+ *  - commitStock: Finalize stock deduction when payment succeeds
+ *  - releaseStock: Release reserved stock when order is cancelled/expired
+ *
+ * The previous implementation did SELECT reserved_quantity, check, then
+ * UPDATE reserved_quantity = (read_value + qty), which leaks lost-update
+ * races under concurrent reservations and oversells stock. The RPCs
+ * defined in supabase/migrations/007_atomic_stock_reservation.sql
+ * collapse the read+check+write into a single conditional UPDATE that
+ * holds the row lock for the duration.
  */
 
 import { supabase } from "@/lib/supabase";
@@ -14,9 +22,9 @@ interface StockItem {
 }
 
 /**
- * Reserve stock for items. Increments reserved_quantity only if enough
- * available stock exists (stock_quantity - reserved_quantity >= quantity).
- * Rolls back all reservations if any item fails.
+ * Reserve stock for items. Each item runs through the atomic
+ * `reserve_stock_atomic` RPC. If any item fails to reserve, all
+ * previously-reserved items in this call are released.
  */
 export async function reserveStock(
   items: StockItem[]
@@ -25,46 +33,34 @@ export async function reserveStock(
 
   for (const item of items) {
     try {
-      // Fetch current stock
-      const { data: product } = await supabase
-        .from("pos_products")
-        .select("id, name, stock_quantity, reserved_quantity, track_inventory")
-        .eq("id", item.product_id)
-        .single();
+      const { data, error } = await supabase.rpc("reserve_stock_atomic", {
+        p_product_id: item.product_id,
+        p_quantity: item.quantity,
+      });
 
-      if (!product || !product.track_inventory) {
-        // Non-tracked products don't need reservation
-        continue;
+      if (error) {
+        console.error("[Stock] reserve_stock_atomic failed:", error);
+        await releaseStock(reserved);
+        return { success: false, error: `Stock reservation failed: ${error.message}` };
       }
 
-      const available =
-        product.stock_quantity - (product.reserved_quantity || 0);
-      if (available < item.quantity) {
-        // Rollback previous reservations
+      // RPC returns a one-row TABLE; supabase wraps single-row returns as
+      // an array.
+      const row = Array.isArray(data) ? data[0] : data;
+
+      if (!row || row.ok === false) {
         await releaseStock(reserved);
         return {
           success: false,
-          error: `Insufficient stock for "${product.name}". Available: ${available}`,
+          error: row?.product_name
+            ? `Insufficient stock for "${row.product_name}". Available: ${row.available ?? 0}`
+            : "Insufficient stock",
         };
-      }
-
-      // Reserve
-      const { error } = await supabase
-        .from("pos_products")
-        .update({
-          reserved_quantity: (product.reserved_quantity || 0) + item.quantity,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", item.product_id);
-
-      if (error) {
-        await releaseStock(reserved);
-        return { success: false, error: `Failed to reserve stock: ${error.message}` };
       }
 
       reserved.push(item);
     } catch (err) {
-      console.error("[Stock] reserveStock error for", item.product_id, err);
+      console.error("[Stock] reserveStock exception for", item.product_id, err);
       await releaseStock(reserved);
       return { success: false, error: "Stock reservation failed" };
     }
@@ -75,63 +71,40 @@ export async function reserveStock(
 
 /**
  * Commit reserved stock. Called when payment succeeds.
- * Decrements both stock_quantity and reserved_quantity.
+ * Decrements both stock_quantity and reserved_quantity atomically.
  */
 export async function commitStock(items: StockItem[]): Promise<void> {
   for (const item of items) {
     try {
-      const { data: product } = await supabase
-        .from("pos_products")
-        .select("id, stock_quantity, reserved_quantity, track_inventory")
-        .eq("id", item.product_id)
-        .single();
-
-      if (!product || !product.track_inventory) continue;
-
-      await supabase
-        .from("pos_products")
-        .update({
-          stock_quantity: Math.max(0, product.stock_quantity - item.quantity),
-          reserved_quantity: Math.max(
-            0,
-            (product.reserved_quantity || 0) - item.quantity
-          ),
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", item.product_id);
+      const { error } = await supabase.rpc("commit_stock_atomic", {
+        p_product_id: item.product_id,
+        p_quantity: item.quantity,
+      });
+      if (error) {
+        console.error("[Stock] commit_stock_atomic failed:", item.product_id, error);
+      }
     } catch (err) {
-      console.error("[Stock] commitStock error for", item.product_id, err);
+      console.error("[Stock] commitStock exception for", item.product_id, err);
     }
   }
 }
 
 /**
- * Release reserved stock. Called when order is cancelled or payment fails.
+ * Release reserved stock. Called when an order is cancelled or payment fails.
  * Decrements only reserved_quantity, leaving stock_quantity unchanged.
  */
 export async function releaseStock(items: StockItem[]): Promise<void> {
   for (const item of items) {
     try {
-      const { data: product } = await supabase
-        .from("pos_products")
-        .select("id, reserved_quantity, track_inventory")
-        .eq("id", item.product_id)
-        .single();
-
-      if (!product || !product.track_inventory) continue;
-
-      await supabase
-        .from("pos_products")
-        .update({
-          reserved_quantity: Math.max(
-            0,
-            (product.reserved_quantity || 0) - item.quantity
-          ),
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", item.product_id);
+      const { error } = await supabase.rpc("release_stock_atomic", {
+        p_product_id: item.product_id,
+        p_quantity: item.quantity,
+      });
+      if (error) {
+        console.error("[Stock] release_stock_atomic failed:", item.product_id, error);
+      }
     } catch (err) {
-      console.error("[Stock] releaseStock error for", item.product_id, err);
+      console.error("[Stock] releaseStock exception for", item.product_id, err);
     }
   }
 }

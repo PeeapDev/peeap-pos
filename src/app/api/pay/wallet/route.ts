@@ -78,11 +78,64 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Update order status to paid
-    await supabase
+    // Update order status to paid. Previously this UPDATE was unchecked —
+    // if Supabase failed, the customer was already charged via scan-pay
+    // but the order stayed pending and we returned success: true. The
+    // merchant then saw the order as unpaid even though the money moved.
+    // Now: log + flag the order for reconciliation if the update fails,
+    // and return success with a warning so the client can show "payment
+    // received, syncing".
+    const paymentReference = data?.transaction_id || data?.transactionId;
+    const { error: updateErr } = await supabase
       .from("store_orders")
-      .update({ status: "paid", updated_at: new Date().toISOString() })
+      .update({
+        status: "paid",
+        payment_reference: paymentReference || sessionId,
+        updated_at: new Date().toISOString(),
+      })
       .eq("id", orderId);
+
+    if (updateErr) {
+      console.error(`[pay/wallet] Order status update failed after successful payment for order ${orderId}:`, updateErr);
+      // Flag for manual reconciliation. We do NOT roll back the payment —
+      // the customer's wallet was already debited and the merchant
+      // already credited via api.peeap.com scan-pay. Reverting now would
+      // require a second API round-trip that itself could fail.
+      try {
+        const existing = await supabase
+          .from("store_orders")
+          .select("metadata")
+          .eq("id", orderId)
+          .single();
+        await supabase
+          .from("store_orders")
+          .update({
+            metadata: {
+              ...((existing.data?.metadata as Record<string, unknown>) || {}),
+              reconciliation_needed: true,
+              reconciliation_reason: "payment_succeeded_status_update_failed",
+              payment_reference: paymentReference || sessionId,
+              failed_at: new Date().toISOString(),
+            },
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", orderId);
+      } catch {
+        // Even the metadata write failed. Log + Slack via the api.peeap.com
+        // alert webhook is the next layer of defence; for now ensure the
+        // server log is loud enough to find later.
+        console.error(`[pay/wallet] CRITICAL: order ${orderId} paid via ${paymentReference} but DB inaccessible — manual reconciliation required`);
+      }
+
+      return NextResponse.json(
+        {
+          success: true,
+          message: "Payment successful, order syncing",
+          reconciliation_pending: true,
+        },
+        { headers }
+      );
+    }
 
     return NextResponse.json(
       { success: true, message: "Payment successful" },
