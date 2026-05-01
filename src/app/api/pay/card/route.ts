@@ -58,7 +58,12 @@ export async function POST(request: NextRequest) {
         merchant_id: order.merchant_id,
         entry_mode: "ONLINE",
         pin: pin || undefined,
-        idempotency_key: `ord-${orderId}-${Date.now()}`,
+        // Deterministic idempotency key — was previously `ord-${orderId}-${Date.now()}`
+        // which gave a different key on every retry, defeating the purpose
+        // of idempotency entirely (network retries would double-charge).
+        // Keying on orderId alone makes a retry of the same order safe;
+        // legitimate retries get the cached authorization decision.
+        idempotency_key: `ord-${orderId}`,
         description: `Order ${order.order_number}`,
       },
       clientIp
@@ -75,8 +80,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Payment authorized — update order
-    await supabase
+    // Payment authorized — update order. Previously this UPDATE was unchecked,
+    // so a Supabase failure after a successful card auth would leave the
+    // customer charged but the order pending forever. Flag for reconciliation
+    // on failure rather than silently lying to the client.
+    const { error: updateErr } = await supabase
       .from("store_orders")
       .update({
         status: "paid",
@@ -84,6 +92,42 @@ export async function POST(request: NextRequest) {
         updated_at: new Date().toISOString(),
       })
       .eq("id", orderId);
+
+    if (updateErr) {
+      console.error(`[pay/card] Order status update failed after successful card auth ${result.id} for order ${orderId}:`, updateErr);
+      try {
+        const existing = await supabase
+          .from("store_orders")
+          .select("metadata")
+          .eq("id", orderId)
+          .single();
+        await supabase
+          .from("store_orders")
+          .update({
+            metadata: {
+              ...((existing.data?.metadata as Record<string, unknown>) || {}),
+              reconciliation_needed: true,
+              reconciliation_reason: "card_auth_succeeded_status_update_failed",
+              authorization_id: result.id,
+              auth_code: result.auth_code,
+              failed_at: new Date().toISOString(),
+            },
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", orderId);
+      } catch {
+        console.error(`[pay/card] CRITICAL: order ${orderId} authorized via ${result.id} but DB inaccessible — manual reconciliation required`);
+      }
+      return NextResponse.json(
+        {
+          success: true,
+          authorization_id: result.id,
+          auth_code: result.auth_code,
+          reconciliation_pending: true,
+        },
+        { headers }
+      );
+    }
 
     // Commit reserved stock
     const { data: items } = await supabase
