@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { DashboardAuthGuard } from "@/components/DashboardAuthGuard";
 import {
   LayoutDashboard,
   ShoppingCart,
@@ -72,6 +73,7 @@ export default function DashboardLayout({
   const pathname = usePathname();
 
   return (
+    <DashboardAuthGuard>
     <div className="flex h-screen bg-gray-100">
       {/* Sidebar */}
       <aside className="w-64 bg-white border-r flex flex-col shrink-0">
@@ -144,5 +146,6 @@ export default function DashboardLayout({
       {/* Main content */}
       <main className="flex-1 overflow-auto">{children}</main>
     </div>
+    </DashboardAuthGuard>
   );
 }

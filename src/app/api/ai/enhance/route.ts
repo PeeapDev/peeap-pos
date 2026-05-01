@@ -67,6 +67,18 @@ export async function POST(request: NextRequest) {
   const { image_url, enhancement_type } = parsed.data;
   const cost = ENHANCEMENT_PRICING[enhancement_type];
 
+  // Fail closed if Replicate isn't configured for non-trivial enhancements.
+  // auto_crop is client-side only so it works without the token.
+  if (enhancement_type !== "auto_crop" && !REPLICATE_API_TOKEN) {
+    return NextResponse.json(
+      {
+        error: "AI image enhancement is not configured on this deployment",
+        details: "Server is missing REPLICATE_API_TOKEN. No charge was made.",
+      },
+      { status: 503, headers }
+    );
+  }
+
   // Debit wallet
   const debitRef = `ai-enhance-${enhancement_type}-${Date.now()}`;
   const debitResult = await debitWallet(
@@ -101,21 +113,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // If no Replicate token, return mock response for development
-    if (!REPLICATE_API_TOKEN) {
-      return NextResponse.json(
-        {
-          enhanced_url: image_url,
-          original_url: image_url,
-          enhancement_type,
-          cost,
-          mock: true,
-          message:
-            "REPLICATE_API_TOKEN not configured. Returning original image.",
-        },
-        { headers }
-      );
-    }
+    // (No-token path is handled at the top of the request before debit.)
 
     // Call Replicate API
     const model = REPLICATE_MODELS[enhancement_type];

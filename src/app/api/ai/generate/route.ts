@@ -49,6 +49,20 @@ export async function POST(request: NextRequest) {
 
   const { prompt, product_name } = parsed.data;
 
+  // Fail closed if Replicate isn't configured. Previously the route
+  // debited the merchant's wallet first and then returned a placeholder
+  // image — silently charging for a fake result. Check the env BEFORE
+  // taking any money.
+  if (!REPLICATE_API_TOKEN) {
+    return NextResponse.json(
+      {
+        error: "AI image generation is not configured on this deployment",
+        details: "Server is missing REPLICATE_API_TOKEN. No charge was made.",
+      },
+      { status: 503, headers }
+    );
+  }
+
   // Debit wallet
   const debitRef = `ai-generate-${Date.now()}`;
   const debitResult = await debitWallet(
@@ -69,21 +83,6 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    // If no Replicate token, return mock response for development
-    if (!REPLICATE_API_TOKEN) {
-      return NextResponse.json(
-        {
-          generated_url: `https://placehold.co/1024x1024/e2e8f0/64748b?text=${encodeURIComponent(product_name)}`,
-          prompt,
-          product_name,
-          cost: GENERATION_COST,
-          mock: true,
-          message:
-            "REPLICATE_API_TOKEN not configured. Returning placeholder image.",
-        },
-        { headers }
-      );
-    }
 
     // Build a product photography prompt
     const fullPrompt = `Professional product photography of ${product_name}. ${prompt}. Clean white background, studio lighting, high resolution, commercial quality, sharp focus, centered composition.`;
