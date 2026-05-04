@@ -33,6 +33,45 @@ export async function OPTIONS(request: NextRequest) {
   return handleCORS(request) || NextResponse.json({});
 }
 
+// DELETE /api/vendor/pos/charge { session_id }
+//
+// Cashier cancel — fires when they tap "Cancel" while waiting for the
+// customer to scan. Best-effort: we forward to Terminal which voids the
+// session and dismisses the screen. The client treats failure as a no-op
+// since the session also expires on its own.
+export async function DELETE(request: NextRequest) {
+  const origin = request.headers.get("origin");
+  const headers = corsHeaders(origin);
+  const auth = await authenticateRequest(request);
+  if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers });
+
+  const body = await request.json().catch(() => ({}));
+  const sessionId = String((body as any).session_id || "").trim();
+  if (!sessionId) {
+    return NextResponse.json({ error: "session_id_required" }, { status: 400, headers });
+  }
+
+  const serviceSecret = process.env.SERVICE_SECRET;
+  if (!serviceSecret) {
+    return NextResponse.json({ error: "service_secret_not_configured" }, { status: 500, headers });
+  }
+
+  try {
+    await fetch(`${TERMINAL_BASE}/api/checkout/cancel-on-device`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-service-secret": serviceSecret,
+      },
+      body: JSON.stringify({ session_id: sessionId, cancelled_by_user_id: auth.sub }),
+    });
+  } catch {
+    // swallow — session will expire on its own
+  }
+
+  return NextResponse.json({ ok: true }, { headers });
+}
+
 export async function POST(request: NextRequest) {
   const origin = request.headers.get("origin");
   const headers = corsHeaders(origin);
