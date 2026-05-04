@@ -22,8 +22,6 @@ import {
   Printer,
   Store,
   TrendingUp,
-  Smartphone,
-  QrCode,
 } from "lucide-react";
 
 interface NavSection {
@@ -51,8 +49,6 @@ const navSections: NavSection[] = [
     title: "In-Store / POS",
     items: [
       { href: "/dashboard/terminal", label: "POS Terminal", icon: ShoppingCart },
-      { href: "/dashboard/pos-devices", label: "Scan-to-Pay Devices", icon: Smartphone },
-      { href: "/dashboard/pos-staff", label: "POS Cashiers", icon: QrCode },
       { href: "/dashboard/kitchen", label: "Kitchen", icon: ChefHat },
       { href: "/dashboard/tables", label: "Tables", icon: LayoutGrid },
       { href: "/dashboard/sales", label: "POS Sales", icon: Receipt },
