@@ -17,6 +17,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { formatCurrency } from "@/utils/currency";
 import Modal from "@/components/ui/Modal";
 import ImageEnhancer from "@/components/ui/ImageEnhancer";
+import { cld } from "@/lib/cloudinary";
 
 interface Category {
   id: string;
@@ -419,7 +420,7 @@ export default function ProductsPage() {
                 <div className="w-24 h-24 rounded-lg border bg-gray-50 overflow-hidden flex items-center justify-center shrink-0">
                   {form.image_url ? (
                     <img
-                      src={form.image_url}
+                      src={cld(form.image_url, "thumb")}
                       alt="Product"
                       className="w-full h-full object-cover"
                     />

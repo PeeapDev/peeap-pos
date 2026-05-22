@@ -2,7 +2,7 @@ import { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
 import Link from "next/link";
-import Image from "next/image";
+import CldImage from "@/components/CldImage";
 import CartIcon from "@/components/shop/CartIcon";
 import ShopUserButton from "@/components/shop/ShopUserButton";
 import QuickAddToCartButton from "@/components/shop/QuickAddToCartButton";
@@ -178,8 +178,9 @@ export default async function StorePage({ params }: Props) {
         <div className="relative">
           {store.banner_url ? (
             <div className="h-48 md:h-72 relative">
-              <Image
+              <CldImage
                 src={store.banner_url}
+                preset="banner"
                 alt={store.name}
                 fill
                 className="object-cover"
@@ -197,8 +198,9 @@ export default async function StorePage({ params }: Props) {
               {/* Logo */}
               <div className="w-24 h-24 md:w-32 md:h-32 rounded-2xl border-4 border-white bg-white shadow-lg overflow-hidden shrink-0">
                 {store.logo_url ? (
-                  <Image
+                  <CldImage
                     src={store.logo_url}
+                    preset={{ w: 256, h: 256, c: "fill" }}
                     alt={store.name}
                     width={128}
                     height={128}
@@ -390,8 +392,9 @@ export default async function StorePage({ params }: Props) {
                         >
                           <div className="aspect-square relative bg-gray-100">
                             {product.image_url ? (
-                              <Image
+                              <CldImage
                                 src={product.image_url}
+                                preset="card"
                                 alt={product.name}
                                 fill
                                 className="object-cover group-hover:scale-105 transition-transform duration-300"

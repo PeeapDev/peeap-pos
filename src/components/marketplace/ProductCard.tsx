@@ -1,10 +1,10 @@
 "use client";
 
-import Image from "next/image";
 import Link from "next/link";
 import { Star, Heart, ShoppingCart } from "lucide-react";
 import VerifiedBadge from "./VerifiedBadge";
 import MoneyBackBadge from "./MoneyBackBadge";
+import CldImage from "@/components/CldImage";
 
 interface ProductCardProps {
   product: {
@@ -44,8 +44,9 @@ export default function ProductCard({
       {/* Image */}
       <Link href={productLink} className="block relative aspect-square overflow-hidden bg-gray-100">
         {imageUrl ? (
-          <Image
+          <CldImage
             src={imageUrl}
+            preset="card"
             alt={product.name}
             fill
             className="object-cover group-hover:scale-105 transition-transform duration-300"

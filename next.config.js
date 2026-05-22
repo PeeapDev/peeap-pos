@@ -15,6 +15,16 @@ const nextConfig = {
         protocol: "https",
         hostname: "ui-avatars.com",
       },
+      {
+        protocol: "https",
+        hostname: "res.cloudinary.com",
+        pathname: "/**",
+      },
+      {
+        protocol: "https",
+        hostname: "pub-26fe0488ce234b198ea67133103ca1b4.r2.dev",
+        pathname: "/**",
+      },
     ],
   },
   async headers() {

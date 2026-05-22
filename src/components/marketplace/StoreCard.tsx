@@ -1,9 +1,9 @@
 "use client";
 
-import Image from "next/image";
 import Link from "next/link";
 import { Star, MapPin, Truck } from "lucide-react";
 import VerifiedBadge from "./VerifiedBadge";
+import CldImage from "@/components/CldImage";
 
 interface StoreCardProps {
   store: {
@@ -29,8 +29,9 @@ export default function StoreCard({ store }: StoreCardProps) {
     >
       {/* Logo */}
       {store.logo_url ? (
-        <Image
+        <CldImage
           src={store.logo_url}
+          preset="logo"
           alt={store.name}
           width={56}
           height={56}

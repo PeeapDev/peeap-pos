@@ -1,7 +1,7 @@
 import { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
-import Image from "next/image";
+import CldImage from "@/components/CldImage";
 import Link from "next/link";
 import AddToCartButton from "@/components/shop/AddToCartButton";
 import BuyNowButton from "@/components/shop/BuyNowButton";
@@ -169,8 +169,9 @@ export default async function ProductPage({ params }: Props) {
             <div className="space-y-4">
               <div className="aspect-square relative bg-white rounded-lg overflow-hidden">
                 {product.image_url ? (
-                  <Image
+                  <CldImage
                     src={product.image_url}
+                    preset="detail"
                     alt={product.name}
                     fill
                     className="object-contain"
@@ -320,8 +321,9 @@ export default async function ProductPage({ params }: Props) {
               <div className="mt-8 bg-white rounded-lg p-4 border">
                 <div className="flex items-center gap-3">
                   {store.logo_url && (
-                    <Image
+                    <CldImage
                       src={store.logo_url}
+                      preset="logo"
                       alt={store.name}
                       width={40}
                       height={40}
@@ -359,8 +361,9 @@ export default async function ProductPage({ params }: Props) {
                   >
                     <div className="aspect-square bg-gray-100 relative overflow-hidden">
                       {sp.image_url ? (
-                        <Image
+                        <CldImage
                           src={sp.image_url}
+                          preset="card"
                           alt={sp.name}
                           fill
                           className="object-cover group-hover:scale-105 transition-transform duration-300"

@@ -1,9 +1,9 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import Image from "next/image";
 import Link from "next/link";
 import { ChevronLeft, ChevronRight } from "lucide-react";
+import CldImage from "@/components/CldImage";
 
 interface Banner {
   id: string;
@@ -74,8 +74,9 @@ export default function HeroBanner({ banners }: { banners: Banner[] }) {
     <section className="relative bg-gray-900 overflow-hidden">
       <Link href={getBannerLink(banner)} className="block relative">
         <div className="relative aspect-[3/1] md:aspect-[4/1]">
-          <Image
+          <CldImage
             src={banner.image_url}
+            preset="banner"
             alt={banner.title}
             fill
             className="object-cover"
