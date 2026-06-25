@@ -248,8 +248,9 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Credit merchant wallet via api.peeap.com
-    if (saleData.total_amount > 0) {
+    // Credit merchant wallet via api.peeap.com. Cash stays physical (the drawer),
+    // so only digital payment methods credit the wallet — matching the POS terminal.
+    if (saleData.total_amount > 0 && saleData.payment_method !== "cash") {
       const walletResult = await creditWallet(
         auth.sub,
         saleData.total_amount,
