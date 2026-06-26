@@ -27,6 +27,20 @@ yarn-error.log*
 .env.*
 !.env.example
 
+# secrets / keys — never commit credentials of any kind
+*.pem
+*.key
+*.p12
+*.pfx
+*.cert
+*_rsa
+*_rsa.pub
+*-key.json
+*credentials*.json
+*service-account*.json
+secrets.json
+secrets.*.json
+
 # vercel
 .vercel
 

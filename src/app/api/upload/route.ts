@@ -5,19 +5,19 @@
  *   - Multipart form: file (image)
  *   - Returns: { url, id, thumbnail, medium }
  *
- * Images served via R2 public URL:
- *   https://pub-26fe0488ce234b198ea67133103ca1b4.r2.dev/{key}
+ * Images served via the R2 public URL configured in R2_PUBLIC_URL.
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { corsHeaders, handleCORS } from "@/lib/cors";
 import { authenticateRequest } from "@/lib/auth";
 
-const R2_BUCKET = "peeap-images";
-const R2_ACCOUNT_ID = process.env.CF_ACCOUNT_ID || "a82104182bb421661f32ba45592d4241";
+// All R2 config comes from env — no hardcoded account ids / bucket URLs in source.
+const R2_BUCKET = process.env.R2_BUCKET || "peeap-images";
+const R2_ACCOUNT_ID = process.env.CF_ACCOUNT_ID || "";
 const R2_ACCESS_KEY = process.env.R2_ACCESS_KEY_ID || "";
 const R2_SECRET_KEY = process.env.R2_SECRET_ACCESS_KEY || "";
-const R2_PUBLIC_URL = process.env.R2_PUBLIC_URL || "https://pub-26fe0488ce234b198ea67133103ca1b4.r2.dev";
+const R2_PUBLIC_URL = process.env.R2_PUBLIC_URL || "";
 const R2_ENDPOINT = `https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`;
 
 // Max file size: 10MB
@@ -47,9 +47,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers });
   }
 
-  if (!R2_ACCESS_KEY || !R2_SECRET_KEY) {
+  if (!R2_ACCESS_KEY || !R2_SECRET_KEY || !R2_ACCOUNT_ID || !R2_PUBLIC_URL) {
     return NextResponse.json(
-      { error: "Image upload not configured. Set R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY." },
+      {
+        error:
+          "Image upload not configured. Set CF_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY and R2_PUBLIC_URL.",
+      },
       { status: 503, headers }
     );
   }
