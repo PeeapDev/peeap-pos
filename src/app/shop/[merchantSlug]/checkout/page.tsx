@@ -257,6 +257,10 @@ export default function CheckoutPage() {
   const [walletPaying, setWalletPaying] = useState(false);
   const [momoPaying, setMomoPaying] = useState(false);
   const [momoUrl, setMomoUrl] = useState<string | null>(null);
+  // Stable idempotency key for order creation. Generated once per checkout
+  // page mount and reused across retries / double-submits so POST /api/checkout
+  // dedupes on (store_id, key) instead of creating duplicate orders.
+  const idempotencyKeyRef = useRef<string>("");
   const [cardPaying, setCardPaying] = useState(false);
   const [showCardInput, setShowCardInput] = useState(false);
   const [cardToken, setCardToken] = useState("");
@@ -310,11 +314,31 @@ export default function CheckoutPage() {
 
   // Fetch wallets + shipping addresses when user is logged in
   useEffect(() => {
-    if (!user?.id) return;
+    if (!user?.id || !token) return;
     setWalletsLoading(true);
-    fetch(`/api/wallet?user_id=${user.id}`)
-      .then((r) => (r.ok ? r.json() : { wallets: [] }))
-      .then((data) => setWallets(data.wallets || []))
+    fetch(`/api/wallet?user_id=${user.id}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(async (r) => {
+        if (r.status === 401 || r.status === 403) {
+          // Stale/invalid session token — clear it and re-prompt login so the
+          // user doesn't get stuck with a phantom "Insufficient balance" caused
+          // by an empty wallet fallback.
+          try {
+            localStorage.removeItem("pos_token");
+            localStorage.removeItem("pos_user");
+            window.dispatchEvent(new CustomEvent("auth-changed", { detail: { token: null, user: null } }));
+          } catch {}
+          return { wallets: [], _expired: true };
+        }
+        return r.ok ? r.json() : { wallets: [] };
+      })
+      .then((data) => {
+        setWallets(data.wallets || []);
+        if (data._expired) {
+          setError("Your session expired. Please sign in again to load your wallet.");
+        }
+      })
       .catch(() => {})
       .finally(() => setWalletsLoading(false));
 
@@ -333,7 +357,7 @@ export default function CheckoutPage() {
       })
       .catch(() => {})
       .finally(() => setLoadingAddress(false));
-  }, [user?.id]);
+  }, [user?.id, token]);
 
   // Poll order status in payment phase
   useEffect(() => {
@@ -502,6 +526,15 @@ export default function CheckoutPage() {
     setError(null);
 
     try {
+      // Reuse a single key for this checkout attempt so a retry / double-tap
+      // returns the same order rather than creating a duplicate.
+      if (!idempotencyKeyRef.current) {
+        idempotencyKeyRef.current =
+          typeof crypto !== "undefined" && "randomUUID" in crypto
+            ? crypto.randomUUID()
+            : `${storeId}-${user.id}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      }
+
       // For mobile money, create a checkout session (external payment needs it)
       const orderRes = await fetch("/api/checkout", {
         method: "POST",
@@ -511,6 +544,7 @@ export default function CheckoutPage() {
         },
         body: JSON.stringify({
           store_id: storeId,
+          idempotency_key: idempotencyKeyRef.current,
           customer_name: user.name || user.email || user.phone || "Peeap User",
           customer_phone: user.phone || "",
           customer_email: user.email || undefined,
