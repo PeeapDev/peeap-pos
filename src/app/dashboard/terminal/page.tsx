@@ -62,6 +62,9 @@ export default function TerminalPage() {
     useOfflineSync(token);
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [store, setStore] = useState<{ name?: string; address?: string; phone?: string } | null>(
+    null
+  );
   const [cart, setCart] = useState<CartItem[]>([]);
   const [search, setSearch] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
@@ -84,14 +87,23 @@ export default function TerminalPage() {
     if (!token) return;
     setLoading(true);
     try {
-      const [prodRes, catRes] = await Promise.all([
+      const [prodRes, catRes, storeRes] = await Promise.all([
         fetch("/api/products", { headers }),
         fetch("/api/categories", { headers }),
+        fetch("/api/stores", { headers }),
       ]);
       const prodData = await prodRes.json();
       const catData = await catRes.json();
+      const storeData = await storeRes.json().catch(() => ({}));
       setProducts(prodData.products || []);
       setCategories(catData.categories || []);
+      if (storeData.store) {
+        setStore({
+          name: storeData.store.name,
+          address: storeData.store.address,
+          phone: storeData.store.phone,
+        });
+      }
     } catch (err) {
       console.error("Failed to load data:", err);
     } finally {
@@ -624,6 +636,9 @@ export default function TerminalPage() {
         open={qrModalOpen}
         token={token}
         amount={grandTotal}
+        storeName={store?.name || "Store"}
+        storeAddress={store?.address || null}
+        storePhone={store?.phone || null}
         lineItems={cart.map((i) => ({
           product_id: i.product_id,
           name: i.product_name,

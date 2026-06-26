@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { Loader2, CheckCircle, Clock, AlertTriangle, Printer, Smartphone } from "lucide-react";
 import Modal from "@/components/ui/Modal";
 import { formatCurrency } from "@/utils/currency";
+import { printReceipt } from "@/lib/receipt-template";
 
 interface QrLineItem {
   product_id?: string | null;
@@ -18,6 +19,8 @@ interface Props {
   amount: number;
   lineItems?: QrLineItem[];
   storeName?: string;
+  storeAddress?: string | null;
+  storePhone?: string | null;
   onPaid?: () => void;
   onClose: () => void;
 }
@@ -56,75 +59,14 @@ function QRImage({ value, size = 220 }: { value: string; size?: number }) {
   return <img src={src} alt="Scan to pay" width={size} height={size} />;
 }
 
-function printReceipt(opts: {
-  storeName: string;
-  amount: number;
-  reference: string;
-  items: QrLineItem[];
-  paidAt: Date;
-}) {
-  const { storeName, amount, reference, items, paidAt } = opts;
-  const rows = items
-    .filter((i) => (i.qty || 0) > 0)
-    .map(
-      (i) =>
-        `<tr><td>${(i.name || "Item").replace(/</g, "&lt;")}</td><td style="text-align:right">${
-          i.qty
-        } × ${formatCurrency(i.price || 0)}</td></tr>`
-    )
-    .join("");
-
-  const html = `<!doctype html><html><head><meta charset="utf-8"><title>Receipt</title>
-  <style>
-    *{font-family:'Courier New',monospace;margin:0;padding:0}
-    body{width:280px;padding:12px;color:#000}
-    .c{text-align:center}.b{font-weight:bold}
-    hr{border:none;border-top:1px dashed #000;margin:8px 0}
-    table{width:100%;font-size:12px}
-    .tot{font-size:18px;font-weight:bold;margin:8px 0}
-    .badge{display:inline-block;border:2px solid #000;border-radius:6px;padding:2px 10px;font-weight:bold;margin-top:6px}
-    .small{font-size:10px;color:#333;word-break:break-all}
-  </style></head><body>
-    <div class="c b" style="font-size:16px">${storeName.replace(/</g, "&lt;")}</div>
-    <div class="c small">${paidAt.toLocaleString()}</div>
-    <hr/>
-    <table>${rows || `<tr><td>Sale</td><td style="text-align:right">${formatCurrency(amount)}</td></tr>`}</table>
-    <hr/>
-    <div class="c tot">${formatCurrency(amount)}</div>
-    <div class="c"><span class="badge">PAID • PEEAP WALLET</span></div>
-    <hr/>
-    <div class="c small">Ref: ${reference}</div>
-    <div class="c small" style="margin-top:6px">Verified by Peeap · peeap.com</div>
-  </body></html>`;
-
-  const iframe = document.createElement("iframe");
-  iframe.style.position = "fixed";
-  iframe.style.right = "0";
-  iframe.style.bottom = "0";
-  iframe.style.width = "0";
-  iframe.style.height = "0";
-  iframe.style.border = "0";
-  document.body.appendChild(iframe);
-  const doc = iframe.contentWindow?.document;
-  if (!doc) return;
-  doc.open();
-  doc.write(html);
-  doc.close();
-  const win = iframe.contentWindow!;
-  win.focus();
-  win.onafterprint = () => {
-    setTimeout(() => document.body.removeChild(iframe), 100);
-  };
-  // Give the iframe a tick to render before printing.
-  setTimeout(() => win.print(), 250);
-}
-
 export default function PeeapQrModal({
   open,
   token,
   amount,
   lineItems = [],
   storeName = "Store",
+  storeAddress = null,
+  storePhone = null,
   onPaid,
   onClose,
 }: Props) {
@@ -266,12 +208,23 @@ export default function PeeapQrModal({
             <div className="grid grid-cols-2 gap-2 w-full mt-5">
               <button
                 onClick={() =>
-                  printReceipt({
+                  void printReceipt({
                     storeName,
-                    amount,
-                    reference: sessionId,
-                    items: lineItems,
-                    paidAt: paidAtRef.current || new Date(),
+                    storeAddress,
+                    storePhone,
+                    receiptNumber: `POS-${sessionId.slice(-10).toUpperCase()}`,
+                    date: paidAtRef.current || new Date(),
+                    items: lineItems
+                      .filter((i) => (i.qty || 0) > 0)
+                      .map((i) => ({
+                        name: i.name || "Item",
+                        qty: i.qty || 1,
+                        unitPrice: i.price || 0,
+                        total: (i.qty || 1) * (i.price || 0),
+                      })),
+                    subtotal: amount,
+                    total: amount,
+                    paymentMethod: "Peeap Wallet",
                   })
                 }
                 className="flex items-center justify-center gap-2 py-3 border rounded-lg text-sm font-medium hover:bg-gray-50"

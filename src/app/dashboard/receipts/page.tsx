@@ -15,6 +15,12 @@ import {
 import { useAuth } from "@/hooks/useAuth";
 import { formatCurrency } from "@/utils/currency";
 import Modal from "@/components/ui/Modal";
+import {
+  printReceipt,
+  qrDataUri,
+  receiptVerifyUrl,
+  type ReceiptData,
+} from "@/lib/receipt-template";
 
 interface SaleItem {
   id: string;
@@ -50,6 +56,12 @@ export default function ReceiptsPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
+  const [store, setStore] = useState<{
+    name?: string;
+    address?: string;
+    phone?: string;
+  } | null>(null);
+  const [previewQr, setPreviewQr] = useState<string>("");
 
   const headers = useMemo(
     () => ({
@@ -79,6 +91,72 @@ export default function ReceiptsPage() {
     fetchSales();
   }, [fetchSales]);
 
+  // Store profile for the receipt header (name / address / phone).
+  useEffect(() => {
+    if (!token) return;
+    fetch("/api/stores", { headers })
+      .then((r) => (r.ok ? r.json() : {}))
+      .then((d: { store?: { name?: string; address?: string; phone?: string } }) => {
+        if (d?.store) {
+          setStore({
+            name: d.store.name,
+            address: d.store.address,
+            phone: d.store.phone,
+          });
+        }
+      })
+      .catch(() => {});
+  }, [token, headers]);
+
+  // Render the verification QR for the on-screen preview.
+  useEffect(() => {
+    if (!selectedSale) {
+      setPreviewQr("");
+      return;
+    }
+    let alive = true;
+    qrDataUri(receiptVerifyUrl(selectedSale.sale_number), 160).then((uri) => {
+      if (alive) setPreviewQr(uri);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [selectedSale]);
+
+  const saleToReceipt = useCallback(
+    (sale: Sale): ReceiptData => ({
+      storeName: store?.name || "Peeap Store",
+      storeAddress: store?.address || null,
+      storePhone: store?.phone || null,
+      receiptNumber: sale.sale_number,
+      date: new Date(sale.created_at),
+      items: sale.items.map((i) => ({
+        name: i.product_name,
+        qty: i.quantity,
+        unitPrice: i.unit_price,
+        total: i.total_price,
+      })),
+      subtotal: sale.subtotal,
+      tax: sale.tax_amount || undefined,
+      discount: sale.discount_amount || undefined,
+      total: sale.total_amount,
+      paymentMethod: sale.payment_method
+        .replace(/_/g, " ")
+        .replace(/\b\w/g, (c) => c.toUpperCase()),
+      customerName: sale.customer_name,
+      cashierName: sale.cashier_name,
+      received:
+        typeof sale.payment_details?.received === "number"
+          ? (sale.payment_details.received as number)
+          : null,
+      change:
+        typeof sale.payment_details?.change === "number"
+          ? (sale.payment_details.change as number)
+          : null,
+    }),
+    [store]
+  );
+
   const filteredSales = useMemo(() => {
     if (!search.trim()) return sales;
     const q = search.toLowerCase();
@@ -91,20 +169,7 @@ export default function ReceiptsPage() {
   }, [sales, search]);
 
   const handlePrint = (sale: Sale) => {
-    const printWindow = window.open("", "_blank", "width=350,height=600");
-    if (!printWindow) return;
-
-    const receiptHTML = generateReceiptHTML(sale);
-    printWindow.document.write(receiptHTML);
-    printWindow.document.close();
-    printWindow.focus();
-    setTimeout(() => {
-      try {
-        printWindow.print();
-      } catch {
-        // Print not available
-      }
-    }, 250);
+    void printReceipt(saleToReceipt(sale));
   };
 
   const handleWhatsAppShare = (sale: Sale) => {
@@ -274,8 +339,14 @@ export default function ReceiptsPage() {
             <div className="bg-white border rounded-lg p-6 font-mono text-sm">
               {/* Header */}
               <div className="text-center mb-4">
-                <h3 className="text-lg font-bold">Peeap POS</h3>
-                <p className="text-xs text-gray-500">
+                <h3 className="text-lg font-bold">{store?.name || "Peeap Store"}</h3>
+                {store?.address && (
+                  <p className="text-[11px] text-gray-500">{store.address}</p>
+                )}
+                {store?.phone && (
+                  <p className="text-[11px] text-gray-500">Tel: {store.phone}</p>
+                )}
+                <p className="text-xs text-gray-500 mt-1">
                   Receipt #{selectedSale.sale_number}
                 </p>
                 <p className="text-xs text-gray-500">
@@ -377,6 +448,17 @@ export default function ReceiptsPage() {
 
               <div className="border-t border-dashed my-3" />
 
+              {/* Verification QR */}
+              {previewQr && (
+                <div className="flex flex-col items-center mt-1 mb-3">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={previewQr} alt="Verify receipt" className="w-32 h-32" />
+                  <p className="text-[10px] text-gray-400 mt-1">
+                    Scan to verify this receipt
+                  </p>
+                </div>
+              )}
+
               {/* Footer */}
               <div className="text-center text-xs text-gray-500">
                 <p>Thank you for your purchase!</p>
@@ -406,84 +488,4 @@ export default function ReceiptsPage() {
       </Modal>
     </div>
   );
-}
-
-/** Generate a printable receipt HTML document */
-function generateReceiptHTML(sale: Sale): string {
-  const items = sale.items
-    .map(
-      (item) => `
-    <tr>
-      <td style="padding:2px 0">${item.product_name}</td>
-      <td style="text-align:center;padding:2px 4px">${item.quantity}</td>
-      <td style="text-align:right;padding:2px 0">${formatCurrency(
-        item.total_price
-      )}</td>
-    </tr>`
-    )
-    .join("");
-
-  return `<!DOCTYPE html>
-<html>
-<head>
-  <title>Receipt ${sale.sale_number}</title>
-  <style>
-    body { font-family: monospace; font-size: 12px; width: 280px; margin: 0 auto; padding: 10px; }
-    .center { text-align: center; }
-    .bold { font-weight: bold; }
-    .divider { border-top: 1px dashed #000; margin: 6px 0; }
-    table { width: 100%; border-collapse: collapse; }
-    td { padding: 1px 0; font-size: 11px; }
-    .total-row td { font-weight: bold; font-size: 13px; padding-top: 4px; }
-    @media print {
-      body { width: auto; }
-      @page { margin: 0; size: 80mm auto; }
-    }
-  </style>
-</head>
-<body>
-  <div class="center bold" style="font-size:16px">Peeap POS</div>
-  <div class="center" style="margin-top:4px">Receipt #${sale.sale_number}</div>
-  <div class="center">${new Date(sale.created_at).toLocaleString()}</div>
-  <div class="divider"></div>
-  <table>
-    <tr><td class="bold">Item</td><td class="bold" style="text-align:center">Qty</td><td class="bold" style="text-align:right">Amount</td></tr>
-    ${items}
-  </table>
-  <div class="divider"></div>
-  <table>
-    <tr><td>Subtotal</td><td style="text-align:right">${formatCurrency(
-      sale.subtotal
-    )}</td></tr>
-    ${
-      sale.tax_amount > 0
-        ? `<tr><td>Tax</td><td style="text-align:right">${formatCurrency(
-            sale.tax_amount
-          )}</td></tr>`
-        : ""
-    }
-    ${
-      sale.discount_amount > 0
-        ? `<tr><td>Discount</td><td style="text-align:right">-${formatCurrency(
-            sale.discount_amount
-          )}</td></tr>`
-        : ""
-    }
-    <tr class="total-row"><td>TOTAL</td><td style="text-align:right">${formatCurrency(
-      sale.total_amount
-    )}</td></tr>
-  </table>
-  <div class="divider"></div>
-  <div>Payment: ${sale.payment_method.replace(/_/g, " ")}</div>
-  ${
-    sale.customer_name
-      ? `<div>Customer: ${sale.customer_name}</div>`
-      : ""
-  }
-  <div class="divider"></div>
-  <div class="center">Thank you for your purchase!</div>
-  <div class="center" style="margin-top:4px;font-size:10px">Powered by Peeap</div>
-  <script>window.onload=function(){window.print()}</script>
-</body>
-</html>`;
 }
