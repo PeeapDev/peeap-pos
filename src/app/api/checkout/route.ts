@@ -7,6 +7,7 @@ import { getShippingQuote, createDeliveryJob } from "@/lib/shipping-client";
 import { reserveStock, commitStock, releaseStock } from "@/lib/stock";
 import { sendNotification, notifyOrderConfirmed, notifyNewOrder } from "@/lib/notification-client";
 import { sendOrderReceiptToChat } from "@/lib/chat-client";
+import { enforceIpRateLimit } from "@/lib/rate-limit";
 
 const STORE_URL =
   process.env.NEXT_PUBLIC_STORE_URL || "https://store.peeap.com";
@@ -35,6 +36,16 @@ export async function POST(request: NextRequest) {
   const headers = corsHeaders(origin);
 
   try {
+    // Rate limit guest checkout per IP — this is a public, unauthenticated
+    // endpoint that reserves stock, so it's the obvious spam/abuse target.
+    const limited = await enforceIpRateLimit(request, "checkout", 20, 60);
+    if (limited) {
+      return NextResponse.json(
+        { error: "Too many requests. Please slow down and try again." },
+        { status: 429, headers }
+      );
+    }
+
     const body = await request.json();
     const parsed = checkoutSchema.safeParse(body);
     if (!parsed.success) {
@@ -46,6 +57,7 @@ export async function POST(request: NextRequest) {
 
     const {
       store_id,
+      idempotency_key,
       customer_name,
       customer_phone,
       customer_email,
@@ -57,6 +69,23 @@ export async function POST(request: NextRequest) {
       order_type,
       customer_id,
     } = parsed.data;
+
+    // Idempotency: if this (store, key) already produced an order, return it
+    // instead of creating a duplicate + a second stock reservation.
+    if (idempotency_key) {
+      const { data: prior } = await supabase
+        .from("store_orders")
+        .select("*, items:store_order_items(*)")
+        .eq("store_id", store_id)
+        .eq("idempotency_key", idempotency_key)
+        .maybeSingle();
+      if (prior) {
+        return NextResponse.json(
+          { order: prior, checkout_url: undefined, deduped: true },
+          { status: 200, headers }
+        );
+      }
+    }
 
     // Verify the store exists and is published
     const { data: store, error: storeError } = await supabase
@@ -207,11 +236,30 @@ export async function POST(request: NextRequest) {
         payment_method,
         status: "pending",
         notes: notes || null,
+        idempotency_key: idempotency_key || null,
       })
       .select()
       .single();
 
-    if (orderError) throw orderError;
+    if (orderError) {
+      // Concurrent duplicate: another request with the same (store,key) won
+      // the unique index. Return that order instead of erroring.
+      if (idempotency_key) {
+        const { data: raced } = await supabase
+          .from("store_orders")
+          .select("*, items:store_order_items(*)")
+          .eq("store_id", store_id)
+          .eq("idempotency_key", idempotency_key)
+          .maybeSingle();
+        if (raced) {
+          return NextResponse.json(
+            { order: raced, checkout_url: undefined, deduped: true },
+            { status: 200, headers }
+          );
+        }
+      }
+      throw orderError;
+    }
 
     // Insert order items
     const itemsToInsert = orderItems.map((item) => ({

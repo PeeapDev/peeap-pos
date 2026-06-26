@@ -90,6 +90,30 @@ export async function commitStock(items: StockItem[]): Promise<void> {
 }
 
 /**
+ * Sell stock directly (no prior reservation). Called for terminal /
+ * scan-pay charges, whose stock was never held via reserveStock.
+ * Decrements only stock_quantity, leaving reserved_quantity untouched so
+ * it can't cannibalise another order's hold. Do NOT use commitStock here —
+ * that also decrements reserved_quantity, which for an unreserved sale
+ * would wrongly release a concurrent reservation.
+ */
+export async function sellStock(items: StockItem[]): Promise<void> {
+  for (const item of items) {
+    try {
+      const { error } = await supabase.rpc("sell_stock_atomic", {
+        p_product_id: item.product_id,
+        p_quantity: item.quantity,
+      });
+      if (error) {
+        console.error("[Stock] sell_stock_atomic failed:", item.product_id, error);
+      }
+    } catch (err) {
+      console.error("[Stock] sellStock exception for", item.product_id, err);
+    }
+  }
+}
+
+/**
  * Release reserved stock. Called when an order is cancelled or payment fails.
  * Decrements only reserved_quantity, leaving stock_quantity unchanged.
  */

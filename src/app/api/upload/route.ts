@@ -23,6 +23,17 @@ const R2_ENDPOINT = `https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`;
 // Max file size: 10MB
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
 
+// Strict raster-image allowlist. Deliberately excludes image/svg+xml — SVGs
+// can carry <script>, and these are served from a public R2 origin, so an
+// uploaded SVG is a stored-XSS vector. Keyed by MIME → allowed extensions.
+const ALLOWED_IMAGE_TYPES: Record<string, string[]> = {
+  "image/jpeg": ["jpg", "jpeg"],
+  "image/png": ["png"],
+  "image/webp": ["webp"],
+  "image/gif": ["gif"],
+  "image/avif": ["avif"],
+};
+
 export async function OPTIONS(request: NextRequest) {
   return handleCORS(request) || NextResponse.json({});
 }
@@ -60,8 +71,16 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "file is required" }, { status: 400, headers });
     }
 
-    if (!file.type.startsWith("image/")) {
-      return NextResponse.json({ error: "Only image files are allowed" }, { status: 400, headers });
+    const allowedExts = ALLOWED_IMAGE_TYPES[file.type];
+    if (!allowedExts) {
+      return NextResponse.json(
+        { error: "Unsupported image type. Allowed: JPEG, PNG, WebP, GIF, AVIF." },
+        { status: 400, headers }
+      );
+    }
+
+    if (file.size === 0) {
+      return NextResponse.json({ error: "Empty file" }, { status: 400, headers });
     }
 
     if (file.size > MAX_FILE_SIZE) {
@@ -71,8 +90,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Generate unique key: products/{userId}/{timestamp}-{random}.{ext}
-    const ext = file.name.split(".").pop()?.toLowerCase() || "jpg";
+    // Derive extension from the validated MIME type, not the client-supplied
+    // filename — never trust the upload's own extension for the stored key.
+    const ext = allowedExts[0];
     const timestamp = Date.now();
     const random = Math.random().toString(36).slice(2, 8);
     const key = `products/${auth.sub}/${timestamp}-${random}.${ext}`;
