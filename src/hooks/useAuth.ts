@@ -155,7 +155,7 @@ export function useAuth() {
         window.removeEventListener("message", handler);
         clearInterval(pollClosed);
 
-        const { user: popupUser, ssoToken } = event.data;
+        const { ssoToken } = event.data;
 
         if (ssoToken) {
           // Exchange SSO token for a validated session via our API
@@ -179,16 +179,12 @@ export function useAuth() {
           }
         }
 
-        // Fallback: use user data from popup + create a local session token
-        if (popupUser) {
-          const u = buildUserFromData(popupUser);
-          // Generate a unique session token - NOT the user ID
-          const fallbackToken = ssoToken || `store_${Date.now()}_${Math.random().toString(36).substring(2)}`;
-          persistSession(fallbackToken, u);
-          resolve(true);
-        } else {
-          resolve(false);
-        }
+        // No fallback that persists a non-validatable token. Previously we
+        // stored either the raw (already-used) ssoToken or a random
+        // `store_<ts>_<rand>` string here — both fail /api/wallet validation
+        // and the user gets stuck with a phantom NLe 0 balance. If the SSO
+        // exchange didn't succeed, refuse the login so they can retry.
+        resolve(false);
       };
 
       window.addEventListener("message", handler);
