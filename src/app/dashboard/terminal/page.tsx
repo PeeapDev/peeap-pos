@@ -19,6 +19,8 @@ import { useAuth } from "@/hooks/useAuth";
 import { useOfflineSync } from "@/hooks/useOfflineSync";
 import { formatCurrency } from "@/utils/currency";
 import Modal from "@/components/ui/Modal";
+import PeeapQrModal from "@/components/pos/PeeapQrModal";
+import { QrCode } from "lucide-react";
 
 interface Category {
   id: string;
@@ -65,6 +67,7 @@ export default function TerminalPage() {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [payModalOpen, setPayModalOpen] = useState(false);
+  const [qrModalOpen, setQrModalOpen] = useState(false);
   const [amountReceived, setAmountReceived] = useState("");
   const [processing, setProcessing] = useState(false);
   const [successSale, setSuccessSale] = useState<string | null>(null);
@@ -494,7 +497,17 @@ export default function TerminalPage() {
             className="w-full mt-3 py-3 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
           >
             <Banknote className="w-5 h-5" />
-            Pay Now
+            Pay Now (Cash)
+          </button>
+
+          <button
+            onClick={() => setQrModalOpen(true)}
+            disabled={cart.length === 0 || !isOnline}
+            title={!isOnline ? "Peeap QR needs an internet connection" : undefined}
+            className="w-full mt-2 py-3 bg-gray-900 text-white font-semibold rounded-lg hover:bg-black disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
+          >
+            <QrCode className="w-5 h-5" />
+            Charge with Peeap (QR)
           </button>
 
           {cart.length > 0 && (
@@ -605,6 +618,24 @@ export default function TerminalPage() {
           </button>
         </div>
       </Modal>
+
+      {/* Peeap scan-to-pay QR */}
+      <PeeapQrModal
+        open={qrModalOpen}
+        token={token}
+        amount={grandTotal}
+        lineItems={cart.map((i) => ({
+          product_id: i.product_id,
+          name: i.product_name,
+          qty: i.quantity,
+          price: i.unit_price,
+        }))}
+        onPaid={() => {
+          setCart([]);
+          setSuccessSale("Peeap QR");
+        }}
+        onClose={() => setQrModalOpen(false)}
+      />
 
       {/* Success Toast */}
       {successSale && (

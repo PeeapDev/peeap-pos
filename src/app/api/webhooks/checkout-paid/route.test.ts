@@ -104,6 +104,9 @@ const h = vi.hoisted(() => {
     creditWallet: vi.fn(),
     commitStock: vi.fn(),
     sellStock: vi.fn(),
+    generateReceiptPDF: vi.fn(),
+    uploadToR2: vi.fn(),
+    sendNotification: vi.fn(),
   };
 });
 
@@ -118,6 +121,9 @@ vi.mock("@/lib/stock", () => ({
   commitStock: h.commitStock,
   sellStock: h.sellStock,
 }));
+vi.mock("@/lib/receipt-pdf", () => ({ generateReceiptPDF: h.generateReceiptPDF }));
+vi.mock("@/lib/r2", () => ({ uploadToR2: h.uploadToR2 }));
+vi.mock("@/lib/notification-client", () => ({ sendNotification: h.sendNotification }));
 
 import { POST } from "@/app/api/webhooks/checkout-paid/route";
 import { hmacSha256Hex } from "@/lib/security";
@@ -143,6 +149,9 @@ beforeEach(() => {
   h.creditWallet.mockReset().mockResolvedValue({ data: { transaction_id: "tx_1" } });
   h.commitStock.mockReset().mockResolvedValue(undefined);
   h.sellStock.mockReset().mockResolvedValue(undefined);
+  h.generateReceiptPDF.mockReset().mockResolvedValue(new ArrayBuffer(8));
+  h.uploadToR2.mockReset().mockResolvedValue("https://r2.example/receipt.pdf");
+  h.sendNotification.mockReset().mockResolvedValue(true);
   process.env.SERVICE_SECRET = SECRET;
 });
 
@@ -210,6 +219,30 @@ describe("checkout-paid webhook — terminal/scan-pay path", () => {
     expect(h.commitStock).not.toHaveBeenCalled();
     // Terminal funds already moved at scan time → no double credit.
     expect(h.creditWallet).not.toHaveBeenCalled();
+  });
+
+  it("sends an instant receipt to the payer when paid_by_user_id is present", async () => {
+    h.state.db.stores = [{ id: "store_1", merchant_id: "merch_1", name: "Corner Shop" }];
+    const res = await POST(
+      makeReq({
+        session_id: "sess_term_receipt",
+        store_id: "store_1",
+        amount: 7500,
+        paid_by_user_id: "payer_99",
+        line_items: [{ product_id: "p1", qty: 1, name: "Rice 5kg", price: 7500 }],
+      })
+    );
+    expect(res.status).toBe(200);
+    // Receipt PDF generated + uploaded, and payer notified with the link.
+    expect(h.generateReceiptPDF).toHaveBeenCalledTimes(1);
+    expect(h.uploadToR2).toHaveBeenCalledTimes(1);
+    expect(h.sendNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        user_id: "payer_99",
+        type: "payment_receipt",
+        action_url: "https://r2.example/receipt.pdf",
+      })
+    );
   });
 
   it("dedupes a retried terminal delivery (same session_id)", async () => {

@@ -33,6 +33,9 @@ import { supabase } from "@/lib/supabase";
 import { commitStock, sellStock } from "@/lib/stock";
 import { creditWallet } from "@/lib/api-client";
 import { timingSafeEqual, verifyHmac } from "@/lib/security";
+import { generateReceiptPDF } from "@/lib/receipt-pdf";
+import { uploadToR2 } from "@/lib/r2";
+import { sendNotification } from "@/lib/notification-client";
 
 const REQUIRE_SIGNATURE = process.env.REQUIRE_WEBHOOK_SIGNATURE === "true";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -73,10 +76,18 @@ export async function POST(request: NextRequest) {
   const storeId = String(body.store_id || "").trim();
   const paidByUserId = (body.paid_by_user_id as string) || null;
   const paidAt = (body.paid_at as string) || new Date().toISOString();
-  const lineItems: Array<{ product_id?: string; qty?: number }> = Array.isArray(
-    body.line_items
-  )
-    ? (body.line_items as Array<{ product_id?: string; qty?: number }>)
+  const lineItems: Array<{
+    product_id?: string;
+    qty?: number;
+    name?: string;
+    price?: number;
+  }> = Array.isArray(body.line_items)
+    ? (body.line_items as Array<{
+        product_id?: string;
+        qty?: number;
+        name?: string;
+        price?: number;
+      }>)
     : [];
 
   if (!sessionId || !storeId) {
@@ -186,16 +197,19 @@ export async function POST(request: NextRequest) {
   // re-read the existing receipt and return it.
   const { data: store } = await supabase
     .from("stores")
-    .select("merchant_id")
+    .select("merchant_id, name, logo_url, address, phone")
     .eq("id", storeId)
     .maybeSingle();
+  const storeRow = store as
+    | { merchant_id?: string; name?: string; logo_url?: string; address?: string; phone?: string }
+    | null;
 
   const receiptNumber = `POS-${sessionId.slice(-10).toUpperCase()}`;
   const { data: created, error: insertErr } = await supabase
     .from("store_orders")
     .insert({
       store_id: storeId,
-      merchant_id: (store as { merchant_id?: string })?.merchant_id || storeId,
+      merchant_id: storeRow?.merchant_id || storeId,
       order_number: receiptNumber,
       customer_name: "POS Customer",
       customer_phone: "",
@@ -234,5 +248,103 @@ export async function POST(request: NextRequest) {
     .map((i) => ({ product_id: i.product_id as string, quantity: i.qty as number }));
   if (stockItems.length) await sellStock(stockItems);
 
+  // Instant receipt to the PAYER as verification. Best-effort: a failure here
+  // must never fail the webhook — the money already moved. api.peeap.com fires
+  // this webhook fire-and-forget, so awaiting is safe (and ensures the work
+  // completes before the function suspends).
+  if (paidByUserId) {
+    await deliverPayerReceipt({
+      payerUserId: paidByUserId,
+      sellerUserId: storeRow?.merchant_id || null,
+      storeId,
+      storeName: storeRow?.name || "Store",
+      storeLogoUrl: storeRow?.logo_url || null,
+      storeAddress: storeRow?.address || null,
+      storePhone: storeRow?.phone || null,
+      receiptNumber,
+      amount,
+      lineItems,
+    }).catch((e) =>
+      console.error("[checkout-paid] payer receipt delivery failed:", e)
+    );
+  }
+
   return NextResponse.json({ ok: true, order_id: finalOrderId, settled: true });
+}
+
+/**
+ * Generate a receipt PDF, upload it to R2, and notify the payer with a link —
+ * their verification that the in-person payment went through. Entirely
+ * best-effort; every step is independently guarded.
+ */
+async function deliverPayerReceipt(params: {
+  payerUserId: string;
+  sellerUserId: string | null;
+  storeId: string;
+  storeName: string;
+  storeLogoUrl: string | null;
+  storeAddress: string | null;
+  storePhone: string | null;
+  receiptNumber: string;
+  amount: number;
+  lineItems: Array<{ product_id?: string; qty?: number; name?: string; price?: number }>;
+}) {
+  const items = params.lineItems
+    .filter((i) => (i.qty || 0) > 0)
+    .map((i) => ({
+      product_name: i.name || "Item",
+      quantity: Number(i.qty) || 1,
+      unit_price: Number(i.price) || 0,
+      total_price: (Number(i.qty) || 1) * (Number(i.price) || 0),
+    }));
+
+  // Receipt PDF + R2 upload (so the payer gets a durable, shareable document).
+  let receiptUrl: string | null = null;
+  try {
+    const pdf = await generateReceiptPDF({
+      order_number: params.receiptNumber,
+      store_name: params.storeName,
+      customer_name: "Customer",
+      items: items.length
+        ? items
+        : [
+            {
+              product_name: "Payment",
+              quantity: 1,
+              unit_price: params.amount,
+              total_price: params.amount,
+            },
+          ],
+      subtotal: params.amount,
+      tax_amount: 0,
+      delivery_fee: 0,
+      total_amount: params.amount,
+      payment_method: "Peeap Wallet",
+      order_type: "pos",
+      store_logo_url: params.storeLogoUrl,
+      store_address: params.storeAddress,
+      store_phone: params.storePhone,
+      tracking_url: `https://store.peeap.com/receipt/${params.receiptNumber}`,
+    });
+    receiptUrl = await uploadToR2(
+      pdf,
+      `receipts/${params.receiptNumber}/${params.payerUserId}.pdf`,
+      "application/pdf"
+    );
+  } catch (err) {
+    console.error("[checkout-paid] receipt PDF failed (will still notify):", err);
+  }
+
+  // In-app notification to the payer — universal, unlike chat which needs an
+  // ecommerce thread. Links to the receipt PDF when we have one.
+  await sendNotification({
+    user_id: params.payerUserId,
+    type: "payment_receipt",
+    title: "Payment Receipt",
+    message: `You paid NLe ${params.amount.toLocaleString()} to ${params.storeName}.`,
+    action_url: receiptUrl || undefined,
+    source_service: "store",
+    source_id: params.receiptNumber,
+    priority: "high",
+  }).catch(() => {});
 }
