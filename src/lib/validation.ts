@@ -61,6 +61,10 @@ export const splitPaymentSchema = z.object({
 });
 
 export const createSaleSchema = z.object({
+  // Client-generated stable id for exactly-once recording (idempotency key).
+  // The same value is reused across offline-sync retries / double-submits so the
+  // server dedupes on (merchant_id, client_sale_id).
+  client_sale_id: z.string().max(64).optional(),
   subtotal: z.number().min(0),
   tax_amount: z.number().min(0).default(0),
   discount_amount: z.number().min(0).default(0),
@@ -215,6 +219,10 @@ export const checkoutItemSchema = z.object({
 
 export const checkoutSchema = z.object({
   store_id: z.string().uuid(),
+  // Client-generated stable id for exactly-once order creation. Reused
+  // across network retries / double-submits; the server dedupes on
+  // (store_id, idempotency_key) via the uq_store_orders_idempotency index.
+  idempotency_key: z.string().min(8).max(64).optional(),
   customer_name: z.string().min(1).max(255),
   customer_phone: z.string().max(50).default(""),
   customer_email: z.string().email().max(255).optional(),

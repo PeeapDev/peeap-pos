@@ -5,23 +5,34 @@
  *   - Multipart form: file (image)
  *   - Returns: { url, id, thumbnail, medium }
  *
- * Images served via R2 public URL:
- *   https://pub-26fe0488ce234b198ea67133103ca1b4.r2.dev/{key}
+ * Images served via the R2 public URL configured in R2_PUBLIC_URL.
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { corsHeaders, handleCORS } from "@/lib/cors";
 import { authenticateRequest } from "@/lib/auth";
 
-const R2_BUCKET = "peeap-images";
-const R2_ACCOUNT_ID = process.env.CF_ACCOUNT_ID || "a82104182bb421661f32ba45592d4241";
+// All R2 config comes from env — no hardcoded account ids / bucket URLs in source.
+const R2_BUCKET = process.env.R2_BUCKET || "peeap-images";
+const R2_ACCOUNT_ID = process.env.CF_ACCOUNT_ID || "";
 const R2_ACCESS_KEY = process.env.R2_ACCESS_KEY_ID || "";
 const R2_SECRET_KEY = process.env.R2_SECRET_ACCESS_KEY || "";
-const R2_PUBLIC_URL = process.env.R2_PUBLIC_URL || "https://pub-26fe0488ce234b198ea67133103ca1b4.r2.dev";
+const R2_PUBLIC_URL = process.env.R2_PUBLIC_URL || "";
 const R2_ENDPOINT = `https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`;
 
 // Max file size: 10MB
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
+
+// Strict raster-image allowlist. Deliberately excludes image/svg+xml — SVGs
+// can carry <script>, and these are served from a public R2 origin, so an
+// uploaded SVG is a stored-XSS vector. Keyed by MIME → allowed extensions.
+const ALLOWED_IMAGE_TYPES: Record<string, string[]> = {
+  "image/jpeg": ["jpg", "jpeg"],
+  "image/png": ["png"],
+  "image/webp": ["webp"],
+  "image/gif": ["gif"],
+  "image/avif": ["avif"],
+};
 
 export async function OPTIONS(request: NextRequest) {
   return handleCORS(request) || NextResponse.json({});
@@ -36,9 +47,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers });
   }
 
-  if (!R2_ACCESS_KEY || !R2_SECRET_KEY) {
+  if (!R2_ACCESS_KEY || !R2_SECRET_KEY || !R2_ACCOUNT_ID || !R2_PUBLIC_URL) {
     return NextResponse.json(
-      { error: "Image upload not configured. Set R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY." },
+      {
+        error:
+          "Image upload not configured. Set CF_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY and R2_PUBLIC_URL.",
+      },
       { status: 503, headers }
     );
   }
@@ -60,8 +74,16 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "file is required" }, { status: 400, headers });
     }
 
-    if (!file.type.startsWith("image/")) {
-      return NextResponse.json({ error: "Only image files are allowed" }, { status: 400, headers });
+    const allowedExts = ALLOWED_IMAGE_TYPES[file.type];
+    if (!allowedExts) {
+      return NextResponse.json(
+        { error: "Unsupported image type. Allowed: JPEG, PNG, WebP, GIF, AVIF." },
+        { status: 400, headers }
+      );
+    }
+
+    if (file.size === 0) {
+      return NextResponse.json({ error: "Empty file" }, { status: 400, headers });
     }
 
     if (file.size > MAX_FILE_SIZE) {
@@ -71,8 +93,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Generate unique key: products/{userId}/{timestamp}-{random}.{ext}
-    const ext = file.name.split(".").pop()?.toLowerCase() || "jpg";
+    // Derive extension from the validated MIME type, not the client-supplied
+    // filename — never trust the upload's own extension for the stored key.
+    const ext = allowedExts[0];
     const timestamp = Date.now();
     const random = Math.random().toString(36).slice(2, 8);
     const key = `products/${auth.sub}/${timestamp}-${random}.${ext}`;

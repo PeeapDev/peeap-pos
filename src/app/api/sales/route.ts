@@ -175,7 +175,35 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { items, ...saleData } = parsed.data;
+    const { items, client_sale_id, ...saleData } = parsed.data;
+
+    // Treat a Postgres "column does not exist" as the client_sale_id column not
+    // being deployed yet — degrade to non-idempotent behaviour rather than break
+    // sales (safe whatever the migration order).
+    const isMissingClientCol = (e: any) =>
+      e &&
+      (e.code === "42703" ||
+        e.code === "PGRST204" ||
+        /client_sale_id/i.test(e.message || "") ||
+        /client_sale_id/i.test(e.details || ""));
+
+    // Exactly-once: if this client_sale_id was already recorded for this merchant,
+    // return the existing sale WITHOUT inserting, crediting, or moving inventory.
+    if (client_sale_id) {
+      const { data: existing, error: lookupErr } = await supabase
+        .from("pos_sales")
+        .select("*, items:pos_sale_items(*)")
+        .eq("merchant_id", auth.sub)
+        .eq("client_sale_id", client_sale_id)
+        .maybeSingle();
+      if (existing) {
+        return NextResponse.json(
+          { sale: existing, idempotent: true },
+          { status: 200, headers }
+        );
+      }
+      if (lookupErr && !isMissingClientCol(lookupErr)) throw lookupErr;
+    }
 
     // Generate sale number
     const { count } = await supabase
@@ -185,17 +213,50 @@ export async function POST(request: NextRequest) {
 
     const saleNumber = `S${String((count || 0) + 1).padStart(6, "0")}`;
 
-    // Insert sale
-    const { data: sale, error: saleError } = await supabase
+    // Insert sale (with client_sale_id when provided)
+    let { data: sale, error: saleError } = await supabase
       .from("pos_sales")
       .insert({
         ...saleData,
+        ...(client_sale_id ? { client_sale_id } : {}),
         merchant_id: auth.sub,
         sale_number: saleNumber,
         status: "completed",
       })
       .select()
       .single();
+
+    // Concurrent double-submit: the unique (merchant_id, client_sale_id) index
+    // rejected this insert because the twin request already created the sale —
+    // return that one instead of a duplicate.
+    if (saleError && (saleError as any).code === "23505" && client_sale_id) {
+      const { data: existing } = await supabase
+        .from("pos_sales")
+        .select("*, items:pos_sale_items(*)")
+        .eq("merchant_id", auth.sub)
+        .eq("client_sale_id", client_sale_id)
+        .maybeSingle();
+      if (existing) {
+        return NextResponse.json(
+          { sale: existing, idempotent: true },
+          { status: 200, headers }
+        );
+      }
+    }
+
+    // Column not deployed yet: retry without client_sale_id so sales still record.
+    if (saleError && isMissingClientCol(saleError) && client_sale_id) {
+      ({ data: sale, error: saleError } = await supabase
+        .from("pos_sales")
+        .insert({
+          ...saleData,
+          merchant_id: auth.sub,
+          sale_number: saleNumber,
+          status: "completed",
+        })
+        .select()
+        .single());
+    }
 
     if (saleError) throw saleError;
 
@@ -248,17 +309,24 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Credit merchant wallet via api.peeap.com
-    if (saleData.total_amount > 0) {
+    // Credit merchant wallet via api.peeap.com. Cash stays physical (the drawer),
+    // so only digital payment methods credit the wallet — matching the POS terminal.
+    if (saleData.total_amount > 0 && saleData.payment_method !== "cash") {
       const walletResult = await creditWallet(
         auth.sub,
         saleData.total_amount,
         `POS Sale ${saleNumber}`,
-        sale.id
+        // Stable reference so the credit dedupes on the client id, not the per-
+        // request sale.id — a retry that somehow reached here won't double-credit.
+        client_sale_id || sale.id
       );
       if (walletResult.error) {
-        console.error("Wallet credit failed:", walletResult.error);
-        // Sale still recorded; wallet credit can be retried
+        // Surface loudly for reconciliation — the sale recorded but the wallet
+        // was not credited; this needs a retry/sweep, not a silent swallow.
+        console.error(
+          `[POS SALE WALLET CREDIT FAILED] sale=${sale.id} client_sale_id=${client_sale_id || "-"} merchant=${auth.sub} amount=${saleData.total_amount}:`,
+          walletResult.error
+        );
       }
     }
 

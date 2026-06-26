@@ -3,6 +3,7 @@ import { corsHeaders, handleCORS } from "@/lib/cors";
 import { supabase } from "@/lib/supabase";
 import { authorizeCardPayment, DECLINE_CODE_MESSAGES } from "@/lib/cards-client";
 import { commitStock } from "@/lib/stock";
+import { enforceIpRateLimit } from "@/lib/rate-limit";
 
 export async function OPTIONS(request: NextRequest) {
   return handleCORS(request) || NextResponse.json({});
@@ -13,6 +14,15 @@ export async function POST(request: NextRequest) {
   const headers = corsHeaders(origin);
 
   try {
+    // PIN/card endpoint — rate limit per IP to blunt PIN/card brute-forcing.
+    const limited = await enforceIpRateLimit(request, "pay-card", 10, 60);
+    if (limited) {
+      return NextResponse.json(
+        { error: "Too many payment attempts. Please wait a moment." },
+        { status: 429, headers }
+      );
+    }
+
     const body = await request.json();
     const { orderId, cardToken, pin } = body;
 

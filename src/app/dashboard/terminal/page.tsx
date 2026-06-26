@@ -19,6 +19,8 @@ import { useAuth } from "@/hooks/useAuth";
 import { useOfflineSync } from "@/hooks/useOfflineSync";
 import { formatCurrency } from "@/utils/currency";
 import Modal from "@/components/ui/Modal";
+import PeeapQrModal from "@/components/pos/PeeapQrModal";
+import { QrCode } from "lucide-react";
 
 interface Category {
   id: string;
@@ -60,11 +62,15 @@ export default function TerminalPage() {
     useOfflineSync(token);
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [store, setStore] = useState<{ name?: string; address?: string; phone?: string } | null>(
+    null
+  );
   const [cart, setCart] = useState<CartItem[]>([]);
   const [search, setSearch] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [payModalOpen, setPayModalOpen] = useState(false);
+  const [qrModalOpen, setQrModalOpen] = useState(false);
   const [amountReceived, setAmountReceived] = useState("");
   const [processing, setProcessing] = useState(false);
   const [successSale, setSuccessSale] = useState<string | null>(null);
@@ -81,14 +87,23 @@ export default function TerminalPage() {
     if (!token) return;
     setLoading(true);
     try {
-      const [prodRes, catRes] = await Promise.all([
+      const [prodRes, catRes, storeRes] = await Promise.all([
         fetch("/api/products", { headers }),
         fetch("/api/categories", { headers }),
+        fetch("/api/stores", { headers }),
       ]);
       const prodData = await prodRes.json();
       const catData = await catRes.json();
+      const storeData = await storeRes.json().catch(() => ({}));
       setProducts(prodData.products || []);
       setCategories(catData.categories || []);
+      if (storeData.store) {
+        setStore({
+          name: storeData.store.name,
+          address: storeData.store.address,
+          phone: storeData.store.phone,
+        });
+      }
     } catch (err) {
       console.error("Failed to load data:", err);
     } finally {
@@ -494,7 +509,17 @@ export default function TerminalPage() {
             className="w-full mt-3 py-3 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
           >
             <Banknote className="w-5 h-5" />
-            Pay Now
+            Pay Now (Cash)
+          </button>
+
+          <button
+            onClick={() => setQrModalOpen(true)}
+            disabled={cart.length === 0 || !isOnline}
+            title={!isOnline ? "Peeap QR needs an internet connection" : undefined}
+            className="w-full mt-2 py-3 bg-gray-900 text-white font-semibold rounded-lg hover:bg-black disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
+          >
+            <QrCode className="w-5 h-5" />
+            Charge with Peeap (QR)
           </button>
 
           {cart.length > 0 && (
@@ -605,6 +630,27 @@ export default function TerminalPage() {
           </button>
         </div>
       </Modal>
+
+      {/* Peeap scan-to-pay QR */}
+      <PeeapQrModal
+        open={qrModalOpen}
+        token={token}
+        amount={grandTotal}
+        storeName={store?.name || "Store"}
+        storeAddress={store?.address || null}
+        storePhone={store?.phone || null}
+        lineItems={cart.map((i) => ({
+          product_id: i.product_id,
+          name: i.product_name,
+          qty: i.quantity,
+          price: i.unit_price,
+        }))}
+        onPaid={() => {
+          setCart([]);
+          setSuccessSale("Peeap QR");
+        }}
+        onClose={() => setQrModalOpen(false)}
+      />
 
       {/* Success Toast */}
       {successSale && (

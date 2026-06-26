@@ -3,11 +3,12 @@
  * Used for receipt PDFs and other programmatic uploads.
  */
 
-const R2_BUCKET = "peeap-images";
-const R2_ACCOUNT_ID = process.env.CF_ACCOUNT_ID || "a82104182bb421661f32ba45592d4241";
+// All R2 config comes from env — no hardcoded account ids / bucket URLs in source.
+const R2_BUCKET = process.env.R2_BUCKET || "peeap-images";
+const R2_ACCOUNT_ID = process.env.CF_ACCOUNT_ID || "";
 const R2_ACCESS_KEY = process.env.R2_ACCESS_KEY_ID || "";
 const R2_SECRET_KEY = process.env.R2_SECRET_ACCESS_KEY || "";
-const R2_PUBLIC_URL = process.env.R2_PUBLIC_URL || "https://pub-26fe0488ce234b198ea67133103ca1b4.r2.dev";
+const R2_PUBLIC_URL = process.env.R2_PUBLIC_URL || "";
 const R2_ENDPOINT = `https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`;
 
 /**
@@ -19,7 +20,7 @@ export async function uploadToR2(
   key: string,
   contentType: string
 ): Promise<string | null> {
-  if (!R2_ACCESS_KEY || !R2_SECRET_KEY) {
+  if (!R2_ACCESS_KEY || !R2_SECRET_KEY || !R2_ACCOUNT_ID || !R2_PUBLIC_URL) {
     console.warn("[R2] Not configured — skipping upload");
     return null;
   }

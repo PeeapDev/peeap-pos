@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { corsHeaders, handleCORS } from "@/lib/cors";
 import { supabase } from "@/lib/supabase";
+import { enforceIpRateLimit } from "@/lib/rate-limit";
 
 const API_BASE_URL = process.env.API_BASE_URL || "https://api.peeap.com";
 const SERVICE_SECRET = process.env.SERVICE_SECRET || "";
@@ -19,6 +20,15 @@ export async function POST(request: NextRequest) {
   const headers = corsHeaders(origin);
 
   try {
+    // PIN-bearing endpoint — rate limit per IP to blunt PIN brute-forcing.
+    const limited = await enforceIpRateLimit(request, "pay-wallet", 10, 60);
+    if (limited) {
+      return NextResponse.json(
+        { error: "Too many payment attempts. Please wait a moment." },
+        { status: 429, headers }
+      );
+    }
+
     const { orderId, userId, walletId, pin, userName } = await request.json();
 
     if (!orderId || !userId || !walletId || !pin) {
