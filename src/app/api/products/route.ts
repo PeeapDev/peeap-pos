@@ -169,6 +169,9 @@ export async function POST(request: NextRequest) {
     const productData = {
       ...parsed.data,
       merchant_id: auth.sub,
+      // Marketplace requires online: a product can only be on the public
+      // marketplace if it's also published to the merchant's online store.
+      show_in_marketplace: !!parsed.data.is_published && !!parsed.data.show_in_marketplace,
       // Auto-generate slug from name if not provided
       slug:
         parsed.data.slug ||
@@ -228,9 +231,19 @@ export async function PUT(request: NextRequest) {
       );
     }
 
+    // Enforce "marketplace requires online": a draft (is_published=false) can
+    // never be on the marketplace. The product form sends both flags together.
+    const updatePayload: Record<string, unknown> = {
+      ...parsed.data,
+      updated_at: new Date().toISOString(),
+    };
+    if (parsed.data.is_published === false) {
+      updatePayload.show_in_marketplace = false;
+    }
+
     const { data, error } = await supabase
       .from("pos_products")
-      .update({ ...parsed.data, updated_at: new Date().toISOString() })
+      .update(updatePayload)
       .eq("id", productId)
       .eq("merchant_id", auth.sub)
       .select()

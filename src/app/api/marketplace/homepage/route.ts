@@ -64,6 +64,7 @@ export async function GET(request: NextRequest) {
             .select("*")
             .eq("is_active", true)
             .eq("is_published", true)
+            .eq("show_in_marketplace", true)
             .order("order_count", { ascending: false })
             .limit(12)
         ),
@@ -81,6 +82,7 @@ export async function GET(request: NextRequest) {
             .select("*")
             .eq("is_active", true)
             .eq("is_published", true)
+            .eq("show_in_marketplace", true)
             .order("created_at", { ascending: false })
             .limit(12)
         ),

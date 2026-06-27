@@ -56,6 +56,7 @@ export async function GET(
       )
       .eq("is_active", true)
       .eq("is_published", true)
+      .eq("show_in_marketplace", true)
       .in("marketplace_category_id", categoryIds);
 
     switch (sort) {

@@ -23,6 +23,7 @@ export async function GET(request: NextRequest) {
       )
       .eq("is_active", true)
       .eq("is_published", true)
+      .eq("show_in_marketplace", true)
       .gt("order_count", 0)
       .order("order_count", { ascending: false })
       .limit(limit);

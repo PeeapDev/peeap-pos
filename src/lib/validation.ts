@@ -28,7 +28,10 @@ export const createProductSchema = z.object({
   video_url: z.preprocess(emptyToNull, z.string().url().nullish()),
   seo_title: z.string().max(160).nullish(),
   seo_description: z.string().max(320).nullish(),
+  // Visibility: is_published = on the merchant's online store; show_in_marketplace
+  // = also listed on the public marketplace (only effective when is_published).
   is_published: z.boolean().default(false),
+  show_in_marketplace: z.boolean().default(false),
 });
 
 export const updateProductSchema = createProductSchema.partial();
