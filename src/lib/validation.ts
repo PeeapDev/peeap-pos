@@ -61,6 +61,10 @@ export const splitPaymentSchema = z.object({
 });
 
 export const createSaleSchema = z.object({
+  // Client-generated stable id for exactly-once recording (idempotency key).
+  // The same value is reused across offline-sync retries / double-submits so the
+  // server dedupes on (merchant_id, client_sale_id).
+  client_sale_id: z.string().max(64).optional(),
   subtotal: z.number().min(0),
   tax_amount: z.number().min(0).default(0),
   discount_amount: z.number().min(0).default(0),
