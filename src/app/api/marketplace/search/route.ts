@@ -28,7 +28,8 @@ export async function GET(request: NextRequest) {
       .from("pos_products")
       .select("*", { count: "exact" })
       .eq("is_active", true)
-      .eq("is_published", true);
+      .eq("is_published", true)
+      .eq("show_in_marketplace", true);
 
     // Full-text search using tsvector
     if (q) {

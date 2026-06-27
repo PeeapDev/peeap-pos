@@ -1,15 +1,21 @@
 import { z } from "zod";
 
 // Products
+// NOTE: optional string fields use `.nullish()` (null OR undefined), not
+// `.optional()`. Clients (e.g. my.peeap.com POSProductsPage) send `null` for
+// empty fields, and Zod's `.optional()` rejects null ("Expected string,
+// received null") — which surfaced as a generic "Failed to save product".
+// An empty image/video URL is normalised to null so it doesn't trip `.url()`.
+const emptyToNull = (v: unknown) => (v === "" ? null : v);
 export const createProductSchema = z.object({
   name: z.string().min(1).max(255),
-  description: z.string().max(2000).optional(),
-  sku: z.string().max(100).optional(),
-  barcode: z.string().max(100).optional(),
+  description: z.string().max(2000).nullish(),
+  sku: z.string().max(100).nullish(),
+  barcode: z.string().max(100).nullish(),
   price: z.number().min(0),
   cost_price: z.number().min(0).default(0),
-  category_id: z.string().uuid().optional(),
-  image_url: z.string().url().optional(),
+  category_id: z.preprocess(emptyToNull, z.string().uuid().nullish()),
+  image_url: z.preprocess(emptyToNull, z.string().url().nullish()),
   track_inventory: z.boolean().default(false),
   stock_quantity: z.number().int().min(0).default(0),
   low_stock_threshold: z.number().int().min(0).default(10),
@@ -18,11 +24,14 @@ export const createProductSchema = z.object({
   is_featured: z.boolean().default(false),
   tax_rate: z.number().min(0).max(100).default(0),
   // E-commerce / SEO fields
-  slug: z.string().max(255).optional(),
-  video_url: z.string().url().optional(),
-  seo_title: z.string().max(160).optional(),
-  seo_description: z.string().max(320).optional(),
+  slug: z.string().max(255).nullish(),
+  video_url: z.preprocess(emptyToNull, z.string().url().nullish()),
+  seo_title: z.string().max(160).nullish(),
+  seo_description: z.string().max(320).nullish(),
+  // Visibility: is_published = on the merchant's online store; show_in_marketplace
+  // = also listed on the public marketplace (only effective when is_published).
   is_published: z.boolean().default(false),
+  show_in_marketplace: z.boolean().default(false),
 });
 
 export const updateProductSchema = createProductSchema.partial();
@@ -61,6 +70,10 @@ export const splitPaymentSchema = z.object({
 });
 
 export const createSaleSchema = z.object({
+  // Client-generated stable id for exactly-once recording (idempotency key).
+  // The same value is reused across offline-sync retries / double-submits so the
+  // server dedupes on (merchant_id, client_sale_id).
+  client_sale_id: z.string().max(64).optional(),
   subtotal: z.number().min(0),
   tax_amount: z.number().min(0).default(0),
   discount_amount: z.number().min(0).default(0),

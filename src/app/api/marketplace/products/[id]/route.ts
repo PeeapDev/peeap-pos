@@ -24,6 +24,7 @@ export async function GET(
       .eq("id", params.id)
       .eq("is_active", true)
       .eq("is_published", true)
+      .eq("show_in_marketplace", true)
       .single();
 
     if (productError || !product) {
@@ -49,6 +50,7 @@ export async function GET(
       .eq("merchant_id", product.merchant_id)
       .eq("is_active", true)
       .eq("is_published", true)
+      .eq("show_in_marketplace", true)
       .neq("id", params.id)
       .order("order_count", { ascending: false })
       .limit(6);
