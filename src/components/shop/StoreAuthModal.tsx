@@ -1,36 +1,27 @@
 "use client";
 
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Loader2, ShieldCheck, X } from "lucide-react";
 import { resumePeeapSession, useAuth } from "@/hooks/useAuth";
 
-type Mode = "login" | "register";
+const PEEAP_ORIGIN = "https://my.peeap.com";
 
-/** The same login sheet is available from product, cart and checkout pages. */
+/** Keep the customer on the store page while Peeap owns all credentials and registration. */
 export default function StoreAuthModal() {
-  const { setSession } = useAuth();
+  const { setSession, exchangeToken } = useAuth();
   const [open, setOpen] = useState(false);
-  const [mode, setMode] = useState<Mode>("login");
   const [busy, setBusy] = useState(false);
-  const [checking, setChecking] = useState(false);
   const [error, setError] = useState("");
-  const [identifier, setIdentifier] = useState("");
-  const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-  const [firstName, setFirstName] = useState("");
-  const [lastName, setLastName] = useState("");
-  const [mfaCode, setMfaCode] = useState("");
-  const [mfaRequired, setMfaRequired] = useState(false);
+  const popupRef = useRef<Window | null>(null);
   const waiting = useRef<Array<(ok: boolean) => void>>([]);
 
   function close(ok: boolean) {
     setOpen(false);
+    setBusy(false);
     setError("");
-    setPassword("");
-    setConfirmPassword("");
-    setMfaCode("");
-    setMfaRequired(false);
+    if (!ok) popupRef.current?.close();
+    popupRef.current = null;
     waiting.current.splice(0).forEach((resolve) => resolve(ok));
   }
 
@@ -38,10 +29,9 @@ export default function StoreAuthModal() {
     const onOpen = (event: Event) => {
       const resolve = (event as CustomEvent<{ resolve: (ok: boolean) => void }>).detail?.resolve;
       if (resolve) waiting.current.push(resolve);
-      setMode("login");
       setError("");
       setOpen(true);
-      setChecking(true);
+      setBusy(true);
       resumePeeapSession()
         .then((session) => {
           if (session) {
@@ -50,7 +40,7 @@ export default function StoreAuthModal() {
           }
         })
         .catch(() => {})
-        .finally(() => setChecking(false));
+        .finally(() => setBusy(false));
     };
     window.addEventListener("store-auth-open", onOpen);
     return () => {
@@ -59,83 +49,58 @@ export default function StoreAuthModal() {
     };
   }, [setSession]);
 
-  async function signIn(emailOrPhone: string, pass: string, code?: string) {
-    const response = await fetch("/api/auth/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ identifier: emailOrPhone, password: pass, mfaCode: code }),
-      cache: "no-store",
-    });
-    const data = await response.json().catch(() => ({}));
-    if (data.mfaRequired) { setMfaRequired(true); return; }
-    if (!response.ok || !data.token || !data.user?.id) {
-      throw new Error(data.error || data.message || "Sign in failed");
-    }
-    const u = data.user;
-    sessionStorage.removeItem("store_signed_out");
-    setSession(data.token, {
-      id: u.id,
-      email: u.email,
-      phone: u.phone,
-      first_name: u.first_name || u.firstName,
-      last_name: u.last_name || u.lastName,
-      name: [u.first_name || u.firstName, u.last_name || u.lastName].filter(Boolean).join(" ") || u.name || u.email,
-      roles: u.roles,
-    });
-    close(true);
-  }
-
-  async function submit(event: FormEvent) {
-    event.preventDefault();
-    if (busy) return;
-    setBusy(true);
-    setError("");
-    try {
-      if (mode === "register") {
-        if (password !== confirmPassword) throw new Error("Passwords do not match");
-        const response = await fetch("/api/auth/register", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: identifier, password, firstName, lastName }),
-          cache: "no-store",
-        });
-        const data = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(data.error || "Registration failed");
+  useEffect(() => {
+    const onMessage = async (event: MessageEvent) => {
+      if (event.origin !== PEEAP_ORIGIN || event.source !== popupRef.current) return;
+      if (event.data?.type !== "PEEAP_AUTH_SUCCESS" || typeof event.data.ssoToken !== "string") return;
+      setBusy(true);
+      try {
+        if (!await exchangeToken(event.data.ssoToken)) throw new Error("Peeap sign-in could not be completed. Please try again.");
+        popupRef.current?.close();
+        close(true);
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : "Sign-in failed");
+        setBusy(false);
       }
-      await signIn(identifier, password, mfaCode || undefined);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Unable to sign in");
-    } finally {
-      setBusy(false);
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [exchangeToken]);
+
+  function openPeeapSignIn() {
+    setError("");
+    const url = new URL("/auth/signin", PEEAP_ORIGIN);
+    url.searchParams.set("mode", "popup");
+    url.searchParams.set("origin", window.location.origin);
+    const popup = window.open(url.toString(), "peeap-store-signin", "popup,width=480,height=700");
+    if (!popup) {
+      setError("Allow the Peeap sign-in popup, then try again.");
+      return;
     }
+    popupRef.current = popup;
+    setBusy(true);
+    popup.focus();
   }
 
   if (!open || typeof document === "undefined") return null;
   return createPortal(
     <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-slate-950/65 px-4 py-6" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) close(false); }}>
-      <div role="dialog" aria-modal="true" aria-labelledby="store-auth-title" className="w-full max-w-md rounded-2xl bg-white shadow-2xl max-h-[calc(100dvh-3rem)] overflow-y-auto">
+      <div role="dialog" aria-modal="true" aria-labelledby="store-auth-title" className="w-full max-w-md rounded-2xl bg-white shadow-2xl">
         <div className="flex items-start justify-between border-b border-gray-100 px-6 py-5">
           <div>
-            <h2 id="store-auth-title" className="text-xl font-bold text-gray-900">{mode === "login" ? "Sign in to Peeap" : "Create your Peeap account"}</h2>
-            <p className="mt-1 text-sm text-gray-500">Stay here and continue shopping after sign-in.</p>
+            <h2 id="store-auth-title" className="text-xl font-bold text-gray-900">Continue with Peeap</h2>
+            <p className="mt-1 text-sm text-gray-500">Sign in or register with Peeap, then continue shopping here.</p>
           </div>
           <button type="button" onClick={() => close(false)} className="rounded-lg p-1 text-gray-500 hover:bg-gray-100" aria-label="Close sign in"><X className="h-5 w-5" /></button>
         </div>
-        <form onSubmit={submit} className="space-y-4 px-6 py-6">
-          {checking && <p className="flex items-center gap-2 text-sm text-emerald-700"><Loader2 className="h-4 w-4 animate-spin" /> Checking your Peeap session…</p>}
+        <div className="space-y-4 px-6 py-6">
           {error && <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
-          {mode === "register" && <div className="grid grid-cols-2 gap-3">
-            <label className="text-sm font-medium text-gray-700">First name<input required autoComplete="given-name" value={firstName} onChange={(e) => setFirstName(e.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 p-3 text-gray-900" /></label>
-            <label className="text-sm font-medium text-gray-700">Last name<input required autoComplete="family-name" value={lastName} onChange={(e) => setLastName(e.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 p-3 text-gray-900" /></label>
-          </div>}
-          <label className="block text-sm font-medium text-gray-700">{mode === "login" ? "Email or phone" : "Email"}<input required type={mode === "register" ? "email" : "text"} autoComplete={mode === "login" ? "username" : "email"} value={identifier} onChange={(e) => setIdentifier(e.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 p-3 text-gray-900" /></label>
-          <label className="block text-sm font-medium text-gray-700">Password<input required type="password" minLength={mode === "register" ? 8 : undefined} autoComplete={mode === "login" ? "current-password" : "new-password"} value={password} onChange={(e) => setPassword(e.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 p-3 text-gray-900" /></label>
-          {mode === "register" && <label className="block text-sm font-medium text-gray-700">Confirm password<input required type="password" minLength={8} autoComplete="new-password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 p-3 text-gray-900" /></label>}
-          {mfaRequired && <label className="block text-sm font-medium text-gray-700">Authenticator code<input required inputMode="numeric" autoComplete="one-time-code" value={mfaCode} onChange={(e) => setMfaCode(e.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 p-3 text-gray-900" /></label>}
-          <button type="submit" disabled={busy || checking} className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 font-semibold text-white hover:bg-emerald-700 disabled:opacity-60">{busy && <Loader2 className="h-4 w-4 animate-spin" />}{mode === "login" ? "Sign in" : "Create account"}</button>
-          <button type="button" onClick={() => { setMode(mode === "login" ? "register" : "login"); setError(""); setMfaRequired(false); }} className="block w-full text-center text-sm font-medium text-emerald-700 hover:underline">{mode === "login" ? "New to Peeap? Create an account" : "Already have an account? Sign in"}</button>
-          <p className="flex items-center justify-center gap-1 text-xs text-gray-500"><ShieldCheck className="h-3.5 w-3.5" /> Protected by Peeap Pay</p>
-        </form>
+          <button type="button" onClick={openPeeapSignIn} className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 font-semibold text-white hover:bg-emerald-700">
+            {busy && <Loader2 className="h-4 w-4 animate-spin" />}
+            Sign in or create a Peeap account
+          </button>
+          <p className="flex items-center justify-center gap-1 text-xs text-gray-500"><ShieldCheck className="h-3.5 w-3.5" /> Your password stays on my.peeap.com</p>
+        </div>
       </div>
     </div>, document.body
   );
