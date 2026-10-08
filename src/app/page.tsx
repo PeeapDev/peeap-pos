@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import MarketplaceHome from "./MarketplaceHome";
+import { DEMO_MERCHANT_FILTER } from "@/lib/marketplace-demo";
 
 function getSupabase() {
   return createClient(
@@ -48,7 +49,7 @@ export default async function HomePage() {
           .eq("is_active", true)
           .is("parent_id", null)
           .order("sort_order")
-          .limit(12)
+          .limit(20)
       ),
       safeQuery(() =>
         supabase
@@ -56,6 +57,8 @@ export default async function HomePage() {
           .select("*")
           .eq("is_active", true)
           .eq("is_published", true)
+          .eq("show_in_marketplace", true)
+          .not("merchant_id", "in", DEMO_MERCHANT_FILTER)
           .order("order_count", { ascending: false })
           .limit(12)
       ),
@@ -64,6 +67,7 @@ export default async function HomePage() {
           .from("stores")
           .select("*")
           .eq("is_published", true)
+          .not("merchant_id", "in", DEMO_MERCHANT_FILTER)
           .order("total_orders", { ascending: false })
           .limit(8)
       ),
@@ -73,6 +77,8 @@ export default async function HomePage() {
           .select("*")
           .eq("is_active", true)
           .eq("is_published", true)
+          .eq("show_in_marketplace", true)
+          .not("merchant_id", "in", DEMO_MERCHANT_FILTER)
           .order("created_at", { ascending: false })
           .limit(12)
       ),
@@ -91,15 +97,17 @@ export default async function HomePage() {
     const { data: stores } = await supabase
       .from("stores")
       .select("id, merchant_id, name, slug, logo_url, city, is_verified, average_rating")
-      .in("merchant_id", merchantIds);
+      .in("merchant_id", merchantIds)
+      .eq("is_published", true)
+      .not("merchant_id", "in", DEMO_MERCHANT_FILTER);
     storeMap = new Map((stores || []).map((s) => [s.merchant_id, s]));
   }
 
-  const trendingProducts = rawTrending.map((p) => ({
+  const trendingProducts = rawTrending.filter((p) => storeMap.has(p.merchant_id)).map((p) => ({
     ...p,
     store: storeMap.get(p.merchant_id) || null,
   }));
-  const newArrivals = rawArrivals.map((p) => ({
+  const newArrivals = rawArrivals.filter((p) => storeMap.has(p.merchant_id)).map((p) => ({
     ...p,
     store: storeMap.get(p.merchant_id) || null,
   }));
