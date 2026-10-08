@@ -32,6 +32,9 @@ export default function StoreAuthModal() {
       setError("");
       setOpen(true);
       setBusy(true);
+      // This event is dispatched directly from the customer's click, so open
+      // the central sign-in window while browser popup permission is active.
+      openPeeapSignIn();
       resumePeeapSession()
         .then((session) => {
           if (session) {
