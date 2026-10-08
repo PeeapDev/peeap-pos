@@ -63,10 +63,17 @@ export async function GET(request: NextRequest) {
     }
 
     // Mark token as used (one-time use)
-    await supabase
+    const { data: redeemed, error: redeemError } = await supabase
       .from("sso_tokens")
       .update({ used_at: new Date().toISOString() })
-      .eq("id", ssoToken.id);
+      .eq("id", ssoToken.id)
+      .is("used_at", null)
+      .gt("expires_at", new Date().toISOString())
+      .select("id")
+      .maybeSingle();
+    if (redeemError || !redeemed) {
+      return NextResponse.json({ error: "SSO token already used or expired" }, { status: 401 });
+    }
 
     // Fetch the user
     const { data: user, error: userError } = await supabase
@@ -84,12 +91,16 @@ export async function GET(request: NextRequest) {
 
     // Create a persistent session token for store API calls
     const sessionToken = crypto.randomUUID() + crypto.randomUUID().replace(/-/g, '');
-    await supabase.from('sso_tokens').insert({
+    const { error: sessionError } = await supabase.from('sso_tokens').insert({
       user_id: user.id,
       token: sessionToken,
       expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), // 30 days
       redirect_path: '/store-session',
     });
+    if (sessionError) {
+      console.error("[SSO] Could not create store session:", sessionError.message);
+      return NextResponse.json({ error: "Could not establish session" }, { status: 503 });
+    }
 
     return NextResponse.json({
       user: {

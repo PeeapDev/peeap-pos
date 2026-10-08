@@ -29,9 +29,11 @@ async function attachStores(products: any[]): Promise<any[]> {
   const { data: stores } = await supabase
     .from("stores")
     .select("id, merchant_id, name, slug, logo_url, city, is_verified, average_rating")
-    .in("merchant_id", merchantIds);
+    .in("merchant_id", merchantIds)
+    .eq("is_published", true);
   const storeMap = new Map((stores || []).map((s) => [s.merchant_id, s]));
-  return products.map((p) => ({ ...p, store: storeMap.get(p.merchant_id) || null }));
+  return products.filter((p) => storeMap.has(p.merchant_id))
+    .map((p) => ({ ...p, store: storeMap.get(p.merchant_id) }));
 }
 
 // GET /api/marketplace/homepage — Public marketplace homepage data
@@ -64,6 +66,7 @@ export async function GET(request: NextRequest) {
             .select("*")
             .eq("is_active", true)
             .eq("is_published", true)
+            .eq("show_in_marketplace", true)
             .order("order_count", { ascending: false })
             .limit(12)
         ),
@@ -81,6 +84,7 @@ export async function GET(request: NextRequest) {
             .select("*")
             .eq("is_active", true)
             .eq("is_published", true)
+            .eq("show_in_marketplace", true)
             .order("created_at", { ascending: false })
             .limit(12)
         ),

@@ -4,6 +4,26 @@ import { corsHeaders, handleCORS } from "@/lib/cors";
 import { supabase } from "@/lib/supabase";
 import { createProductSchema, updateProductSchema } from "@/lib/validation";
 
+async function validateMarketplaceListing(product: {
+  is_published?: boolean;
+  show_in_marketplace?: boolean;
+  price?: number;
+  marketplace_category_id?: string | null;
+}, merchantId: string): Promise<string | null> {
+  if (!product.show_in_marketplace) return null;
+  if (!product.is_published || !product.price || product.price <= 0) {
+    return "A marketplace product must be published with a price above zero";
+  }
+  if (!product.marketplace_category_id) return "Choose a marketplace category";
+  const [{ data: store }, { data: category }] = await Promise.all([
+    supabase.from("stores").select("id").eq("merchant_id", merchantId).eq("is_published", true).single(),
+    supabase.from("marketplace_categories").select("id").eq("id", product.marketplace_category_id).eq("is_active", true).single(),
+  ]);
+  if (!store) return "Publish your store before listing products in the marketplace";
+  if (!category) return "Choose an active marketplace category";
+  return null;
+}
+
 export async function OPTIONS(request: NextRequest) {
   return handleCORS(request) || NextResponse.json({});
 }
@@ -166,6 +186,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const listingError = await validateMarketplaceListing(parsed.data, auth.sub);
+    if (listingError) return NextResponse.json({ error: listingError }, { status: 400, headers });
+
     const productData = {
       ...parsed.data,
       merchant_id: auth.sub,
@@ -227,6 +250,16 @@ export async function PUT(request: NextRequest) {
         { status: 400, headers }
       );
     }
+
+    const { data: currentProduct } = await supabase
+      .from("pos_products")
+      .select("id, is_published, show_in_marketplace, price, marketplace_category_id")
+      .eq("id", productId)
+      .eq("merchant_id", auth.sub)
+      .single();
+    if (!currentProduct) return NextResponse.json({ error: "Product not found" }, { status: 404, headers });
+    const listingError = await validateMarketplaceListing({ ...currentProduct, ...parsed.data }, auth.sub);
+    if (listingError) return NextResponse.json({ error: listingError }, { status: 400, headers });
 
     const { data, error } = await supabase
       .from("pos_products")

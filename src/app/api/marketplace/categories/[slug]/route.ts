@@ -48,14 +48,23 @@ export async function GET(
       ...(childCats || []).map((c) => c.id),
     ];
 
+    const { data: publishedStores, error: storesError } = await supabase
+      .from("stores")
+      .select("id, merchant_id, name, slug, logo_url, city, is_verified")
+      .eq("is_published", true);
+    if (storesError) throw storesError;
+    if (!publishedStores?.length) {
+      return NextResponse.json({ category, products: [], total: 0, page, per_page: perPage }, { headers });
+    }
+    const storeMap = new Map(publishedStores.map((store) => [store.merchant_id, store]));
+
     let query = supabase
       .from("pos_products")
-      .select(
-        "*, store:stores!inner(id, name, slug, logo_url, city, is_verified)",
-        { count: "exact" }
-      )
+      .select("*", { count: "exact" })
       .eq("is_active", true)
       .eq("is_published", true)
+      .eq("show_in_marketplace", true)
+      .in("merchant_id", publishedStores.map((store) => store.merchant_id))
       .in("marketplace_category_id", categoryIds);
 
     switch (sort) {
@@ -83,7 +92,7 @@ export async function GET(
     return NextResponse.json(
       {
         category,
-        products: data || [],
+        products: (data || []).map((product) => ({ ...product, store: storeMap.get(product.merchant_id) })),
         total: count || 0,
         page,
         per_page: perPage,

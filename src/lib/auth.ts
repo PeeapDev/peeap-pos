@@ -88,8 +88,8 @@ async function validateSessionToken(token: string): Promise<AuthPayload | null> 
 }
 
 /**
- * Authenticate a request using session token (web) or legacy mobile base64
- * payload. SERVICE_SECRET is handled separately by `authenticateServiceCall`.
+ * Authenticate a request using a server-validated Peeap session token.
+ * SERVICE_SECRET is handled separately by `authenticateServiceCall`.
  */
 export async function authenticateRequest(
   request: NextRequest
@@ -104,41 +104,7 @@ export async function authenticateRequest(
   const sessionPayload = await validateSessionToken(token);
   if (sessionPayload) return sessionPayload;
 
-  // 2. Legacy base64 payload (older mobile clients)
-  try {
-    const decoded = Buffer.from(token, "base64").toString("utf-8");
-    const parsed = JSON.parse(decoded);
-    if (parsed.userId && parsed.exp && parsed.exp > Date.now()) {
-      const mainDb = getMainDb();
-      if (!mainDb) return null;
-      const { data: user } = await mainDb
-        .from("users" as any)
-        .select("id, email, phone, roles")
-        .eq("id", parsed.userId)
-        .single() as {
-        data: { id: string; email: string; phone: string; roles: any } | null;
-      };
-      if (!user) return null;
-
-      let roles: string[] = [];
-      if (Array.isArray(user.roles)) {
-        roles = user.roles;
-      } else if (typeof user.roles === "string") {
-        const raw = (user.roles as string).replace(/[{}[\]"]/g, "").trim();
-        roles = raw ? raw.split(",").map((r) => r.trim()) : [];
-      }
-
-      return {
-        sub: user.id,
-        email: user.email || undefined,
-        phone: user.phone || undefined,
-        roles,
-      };
-    }
-  } catch {
-    // Not a base64 payload — fall through
-  }
-
+  // Unsigned base64 identity payloads are forgeable and are never credentials.
   return null;
 }
 

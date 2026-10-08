@@ -2,9 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { corsHeaders, handleCORS } from "@/lib/cors";
 import { supabase } from "@/lib/supabase";
 import { checkoutSchema } from "@/lib/validation";
-import { initiatePayment, debitWallet, creditWallet } from "@/lib/api-client";
+import { initiatePayment } from "@/lib/api-client";
+import { authenticateRequest } from "@/lib/auth";
 import { getShippingQuote, createDeliveryJob } from "@/lib/shipping-client";
-import { reserveStock, commitStock, releaseStock } from "@/lib/stock";
+import { reserveStock } from "@/lib/stock";
 import { sendNotification, notifyOrderConfirmed, notifyNewOrder } from "@/lib/notification-client";
 import { sendOrderReceiptToChat } from "@/lib/chat-client";
 
@@ -42,6 +43,26 @@ export async function POST(request: NextRequest) {
         { error: "Validation failed", details: parsed.error.flatten() },
         { status: 400, headers }
       );
+    }
+
+    // The public POS order endpoint must never move Peeap wallet funds.
+    // Wallet purchases are authorized and settled only by my.peeap.com's
+    // /api/store/purchase flow, which verifies the buyer's session and PIN.
+    if (parsed.data.payment_method === "wallet") {
+      return NextResponse.json(
+        { error: "Wallet purchases must use Peeap checkout" },
+        { status: 403, headers }
+      );
+    }
+
+    // A public caller may check out as a guest, but may not attach an order
+    // (or notifications / receipt) to another Peeap user's account.
+    if (parsed.data.customer_id) {
+      const auth = await authenticateRequest(request);
+      if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers });
+      if (auth.sub !== parsed.data.customer_id) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403, headers });
+      }
     }
 
     const {
@@ -317,88 +338,6 @@ export async function POST(request: NextRequest) {
         }
       } catch (err) {
         console.error("Peeap checkout error:", err);
-      }
-    } else if (payment_method === "wallet" && customer_id) {
-      // Direct wallet debit
-      const debitResult = await debitWallet(
-        customer_id,
-        totalAmount,
-        `Order ${orderNumber} at ${store.name}`,
-        order.id
-      );
-
-      if (debitResult.data?.transaction_id) {
-        // Credit merchant — if this fails after debit succeeded, the buyer
-        // loses money. Compensating refund protects against that.
-        const creditResult = await creditWallet(
-          store.merchant_id,
-          totalAmount,
-          `Sale: Order ${orderNumber}`,
-          order.id
-        );
-
-        if (creditResult.error) {
-          // Merchant credit failed — attempt compensating refund to buyer
-          console.error(`[WALLET] Merchant credit failed for order ${orderNumber}:`, creditResult.error);
-          const refundResult = await creditWallet(
-            customer_id,
-            totalAmount,
-            `Refund: merchant credit failed for ${orderNumber}`,
-            `refund-${order.id}`
-          );
-
-          if (refundResult.error) {
-            // Both credit AND refund failed — flag for manual reconciliation
-            console.error(`[CRITICAL] Refund also failed for order ${orderNumber}:`, refundResult.error);
-            await supabase
-              .from("store_orders")
-              .update({
-                status: "pending",
-                metadata: {
-                  ...(order.metadata as Record<string, unknown> || {}),
-                  reconciliation_needed: true,
-                  reconciliation_reason: "buyer_debited_merchant_credit_failed_refund_failed",
-                  debit_transaction_id: debitResult.data.transaction_id,
-                  failed_at: new Date().toISOString(),
-                },
-                updated_at: new Date().toISOString(),
-              })
-              .eq("id", order.id);
-          } else {
-            // Buyer refunded successfully — order stays pending, buyer can retry
-            await supabase
-              .from("store_orders")
-              .update({ status: "pending", updated_at: new Date().toISOString() })
-              .eq("id", order.id);
-          }
-
-          await releaseStock(stockItems);
-          return NextResponse.json(
-            { error: "Payment processing failed. Your wallet has been refunded. Please try again." },
-            { status: 500, headers }
-          );
-        }
-
-        // Both debit + credit succeeded — confirm order
-        await supabase
-          .from("store_orders")
-          .update({
-            status: "confirmed",
-            payment_reference: debitResult.data.transaction_id,
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", order.id);
-
-        // Commit stock reservation (payment succeeded)
-        await commitStock(stockItems);
-      } else {
-        // Debit failed — release stock reservation
-        await releaseStock(stockItems);
-        console.error("Wallet debit failed:", debitResult.error);
-        return NextResponse.json(
-          { error: debitResult.error || "Wallet payment failed. Please try another method." },
-          { status: 400, headers }
-        );
       }
     } else if (payment_method === "card") {
       // Card payment is handled separately via /api/pay/card

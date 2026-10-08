@@ -13,15 +13,30 @@ import { NextRequest, NextResponse } from "next/server";
 import { corsHeaders, handleCORS } from "@/lib/cors";
 import { authenticateRequest } from "@/lib/auth";
 
-const R2_BUCKET = "peeap-images";
+const R2_BUCKET = process.env.R2_BUCKET || "peeap-images";
 const R2_ACCOUNT_ID = process.env.CF_ACCOUNT_ID || "a82104182bb421661f32ba45592d4241";
 const R2_ACCESS_KEY = process.env.R2_ACCESS_KEY_ID || "";
 const R2_SECRET_KEY = process.env.R2_SECRET_ACCESS_KEY || "";
 const R2_PUBLIC_URL = process.env.R2_PUBLIC_URL || "https://pub-26fe0488ce234b198ea67133103ca1b4.r2.dev";
 const R2_ENDPOINT = `https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`;
 
-// Max file size: 10MB
-const MAX_FILE_SIZE = 10 * 1024 * 1024;
+const MAX_FILE_SIZE = 5 * 1024 * 1024;
+const IMAGE_EXTENSIONS: Record<string, string> = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+  "image/avif": "avif",
+};
+
+function matchesImageSignature(bytes: Uint8Array, mimeType: string): boolean {
+  if (bytes.length < 12) return false;
+  if (mimeType === "image/jpeg") return bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+  if (mimeType === "image/png") return bytes.slice(0, 8).every((value, index) => value === [137, 80, 78, 71, 13, 10, 26, 10][index]);
+  const ascii = (start: number, end: number) => String.fromCharCode(...bytes.slice(start, end));
+  if (mimeType === "image/webp") return ascii(0, 4) === "RIFF" && ascii(8, 12) === "WEBP";
+  if (mimeType === "image/avif") return ascii(4, 8) === "ftyp" && ["avif", "avis"].includes(ascii(8, 12));
+  return false;
+}
 
 export async function OPTIONS(request: NextRequest) {
   return handleCORS(request) || NextResponse.json({});
@@ -60,8 +75,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "file is required" }, { status: 400, headers });
     }
 
-    if (!file.type.startsWith("image/")) {
-      return NextResponse.json({ error: "Only image files are allowed" }, { status: 400, headers });
+    if (!IMAGE_EXTENSIONS[file.type]) {
+      return NextResponse.json({ error: "Use JPEG, PNG, WebP, or AVIF images" }, { status: 415, headers });
     }
 
     if (file.size > MAX_FILE_SIZE) {
@@ -71,14 +86,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Generate unique key: products/{userId}/{timestamp}-{random}.{ext}
-    const ext = file.name.split(".").pop()?.toLowerCase() || "jpg";
-    const timestamp = Date.now();
-    const random = Math.random().toString(36).slice(2, 8);
-    const key = `products/${auth.sub}/${timestamp}-${random}.${ext}`;
+    const fileBuffer = await file.arrayBuffer();
+    if (!matchesImageSignature(new Uint8Array(fileBuffer), file.type)) {
+      return NextResponse.json({ error: "Image contents do not match the selected file type" }, { status: 415, headers });
+    }
+
+    // The server chooses the extension and key; uploaded filenames are untrusted.
+    const key = `products/${auth.sub}/${crypto.randomUUID()}.${IMAGE_EXTENSIONS[file.type]}`;
 
     // Upload to R2 using S3-compatible API with AWS Signature V4
-    const fileBuffer = await file.arrayBuffer();
     const url = `${R2_ENDPOINT}/${R2_BUCKET}/${key}`;
 
     const now = new Date();

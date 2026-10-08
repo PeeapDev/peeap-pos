@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
@@ -243,6 +243,7 @@ export default function CheckoutPage() {
 
   // Form state
   const [deliveryAddress, setDeliveryAddress] = useState("");
+  const [selectedAddressId, setSelectedAddressId] = useState<string | null>(null);
   const [savedAddresses, setSavedAddresses] = useState<Array<{ id: string; address_line: string; city: string; is_default: boolean }>>([]);
   const [loadingAddress, setLoadingAddress] = useState(false);
   const [notes, setNotes] = useState("");
@@ -254,7 +255,7 @@ export default function CheckoutPage() {
   const [walletsLoading, setWalletsLoading] = useState(false);
   const [showPin, setShowPin] = useState(false);
   const [pinError, setPinError] = useState<string | null>(null);
-  const [walletPaying, setWalletPaying] = useState(false);
+  const purchaseKeyRef = useRef<string | null>(null);
   const [momoPaying, setMomoPaying] = useState(false);
   const [momoUrl, setMomoUrl] = useState<string | null>(null);
   const [cardPaying, setCardPaying] = useState(false);
@@ -310,17 +311,21 @@ export default function CheckoutPage() {
 
   // Fetch wallets + shipping addresses when user is logged in
   useEffect(() => {
-    if (!user?.id) return;
+    if (!user?.id || !token) return;
     setWalletsLoading(true);
-    fetch(`/api/wallet?user_id=${user.id}`)
-      .then((r) => (r.ok ? r.json() : { wallets: [] }))
+    fetch(`/api/wallet?user_id=${encodeURIComponent(user.id)}`, {
+      headers: { Authorization: `Session ${token}` },
+    })
+      .then((r) => { if (!r.ok) throw new Error("Wallet unavailable"); return r.json(); })
       .then((data) => setWallets(data.wallets || []))
-      .catch(() => {})
+      .catch(() => setError("Could not verify your Peeap wallet. Please sign in again or retry."))
       .finally(() => setWalletsLoading(false));
 
     // Load shipping addresses
     setLoadingAddress(true);
-    fetch(`/api/address?user_id=${user.id}`)
+    fetch(`/api/address?user_id=${encodeURIComponent(user.id)}`, {
+      headers: { Authorization: `Session ${token}` },
+    })
       .then((r) => (r.ok ? r.json() : { addresses: [] }))
       .then((data) => {
         const addrs = data.addresses || [];
@@ -329,11 +334,12 @@ export default function CheckoutPage() {
         const defaultAddr = addrs.find((a: any) => a.is_default) || addrs[0];
         if (defaultAddr && !deliveryAddress) {
           setDeliveryAddress([defaultAddr.address_line, defaultAddr.city].filter(Boolean).join(', '));
+          if (defaultAddr.id !== "profile") setSelectedAddressId(defaultAddr.id);
         }
       })
       .catch(() => {})
       .finally(() => setLoadingAddress(false));
-  }, [user?.id]);
+  }, [user?.id, token]);
 
   // Poll order status in payment phase
   useEffect(() => {
@@ -372,7 +378,8 @@ export default function CheckoutPage() {
 
   const handleLogin = async () => {
     setLoggingIn(true);
-    await loginPopup();
+    const signedIn = await loginPopup();
+    if (!signedIn) setError("Peeap sign-in did not complete. Please try again.");
     setLoggingIn(false);
   };
 
@@ -389,12 +396,24 @@ export default function CheckoutPage() {
     }
     if (!storeId || items.length === 0) return;
 
+    if (!selectedAddressId) {
+      setError("Choose a saved shipping address in Peeap before buying physical goods.");
+      return;
+    }
+
     // Check balance upfront
     if (!hasEnoughBalance) {
       setError(`Insufficient balance. You need NLe ${orderTotal.toLocaleString()} but have NLe ${walletBalance.toLocaleString()}. Please deposit funds first.`);
       return;
     }
 
+    setPinError(null);
+    setShowPin(true);
+  };
+
+  const submitPurchase = async (pin: string) => {
+    if (loading || !user || !token || !selectedAddressId) return;
+    if (!purchaseKeyRef.current) purchaseKeyRef.current = crypto.randomUUID();
     setLoading(true);
     try {
       // Direct wallet-to-wallet via Peeap API — no checkout session needed
@@ -410,6 +429,9 @@ export default function CheckoutPage() {
             product_id: i.product_id,
             quantity: i.quantity,
           })),
+          address_id: selectedAddressId,
+          idempotency_key: purchaseKeyRef.current,
+          pin,
           customer_name: user?.name || user?.email || user?.phone || "Peeap User",
           customer_phone: user?.phone || "",
           notes: notes.trim() || undefined,
@@ -420,18 +442,25 @@ export default function CheckoutPage() {
       });
 
       const data = await res.json();
-      if (!res.ok) {
+      if (!res.ok || data.success !== true) {
         if (data.error === "insufficient_balance") {
-          setError(data.error_description || "Insufficient wallet balance.");
+          setPinError(data.error_description || "Insufficient wallet balance.");
         } else if (data.error === "no_address") {
-          setError("No shipping address found. Please add one in your Peeap profile.");
+          setPinError("No shipping address found. Please add one in your Peeap profile.");
+        } else if (data.error === "pin_not_set") {
+          setPinError("Set a transaction PIN in Peeap Security settings before buying.");
+        } else if (data.error === "invalid_pin" || data.error === "pin_locked") {
+          setPinError(data.error_description || data.error.replaceAll("_", " "));
         } else {
-          throw new Error(data.error || data.details || "Failed to place order");
+          throw new Error(data.error === "purchase_pending_reconciliation"
+            ? `Payment is being checked. Do not start another order. Reference: ${data.transaction_ref || "pending"}`
+            : (data.error || data.details || "Failed to place order"));
         }
         return;
       }
 
       clearCart(merchantSlug);
+      setShowPin(false);
       setOrder({
         id: data.order?.id || "",
         order_number: data.order?.order_number || "N/A",
@@ -440,60 +469,11 @@ export default function CheckoutPage() {
       });
       setPhase("success");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong");
+      setPinError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
       setLoading(false);
     }
   };
-
-  // Wallet payment — now the same as placing order (direct wallet-to-wallet)
-  const handleWalletPay = useCallback(
-    async (_pin: string) => {
-      // With wallet-to-wallet, payment happens at order time — no separate pay step.
-      // This callback exists for the PIN overlay but we handle payment in handlePlaceOrder.
-      setShowPin(false);
-      // If we somehow still have an unpaid order, re-attempt via direct API
-      if (order && user && primaryWallet) {
-        setWalletPaying(true);
-        try {
-          const res = await fetch(`${PEEAP_API}/api/store/purchase`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Session ${token}`,
-            },
-            body: JSON.stringify({
-              store_slug: merchantSlug,
-              items: items.map((i) => ({ product_id: i.product_id, quantity: i.quantity })),
-              customer_name: user?.name || user?.email || user?.phone || "Peeap User",
-              customer_phone: user?.phone || "",
-              notes: notes.trim() || undefined,
-              delivery_address: deliveryAddress.trim() || undefined,
-              order_type: deliveryAddress.trim() ? "delivery" : "online",
-            }),
-          });
-          const data = await res.json();
-          if (res.ok) {
-            clearCart(merchantSlug);
-            setOrder({
-              id: data.order?.id || order.id,
-              order_number: data.order?.order_number || order.order_number,
-              total_amount: data.order?.total || order.total_amount,
-              payment_reference: data.transaction_ref || "",
-            });
-            setPhase("success");
-          } else {
-            setPinError(data.error_description || data.error || "Payment failed");
-          }
-        } catch {
-          setPinError("Payment failed. Try again.");
-        } finally {
-          setWalletPaying(false);
-        }
-      }
-    },
-    [order, user, primaryWallet, token, merchantSlug, items]
-  );
 
   // Mobile money — only method that still needs a checkout session
   const handleMobileMoney = async () => {
@@ -783,16 +763,6 @@ export default function CheckoutPage() {
   if (phase === "payment" && order) {
     return (
       <div className="min-h-screen bg-gray-50">
-        {/* PIN Overlay */}
-        {showPin && (
-          <PinOverlay
-            onSubmit={handleWalletPay}
-            onClose={() => { setShowPin(false); setPinError(null); setWalletPaying(false); }}
-            loading={walletPaying}
-            error={pinError}
-          />
-        )}
-
         {/* Header */}
         <div className="bg-white border-b">
           <div className="max-w-lg mx-auto px-4 py-4 flex items-center justify-between">
@@ -844,12 +814,7 @@ export default function CheckoutPage() {
           {/* Wallet Pay */}
           <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
             <button
-              onClick={() => {
-                if (!primaryWallet || !hasEnoughBalance) return;
-                setPinError(null);
-                setShowPin(true);
-              }}
-              disabled={!primaryWallet || !hasEnoughBalance || walletPaying}
+              disabled
               className="w-full p-5 flex items-center gap-4 hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-left"
             >
               <div className="w-12 h-12 rounded-xl bg-emerald-100 flex items-center justify-center shrink-0">
@@ -875,7 +840,7 @@ export default function CheckoutPage() {
                     ? "No wallet found"
                     : !hasEnoughBalance
                     ? "Insufficient balance"
-                    : "Tap to pay instantly"}
+                    : "Unavailable after mobile-money payment starts"}
                 </p>
               </div>
               {primaryWallet && hasEnoughBalance && (
@@ -887,8 +852,7 @@ export default function CheckoutPage() {
           {/* Mobile Money */}
           <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
             <button
-              onClick={handleMobileMoney}
-              disabled={momoPaying}
+              disabled
               className="w-full p-5 flex items-center gap-4 hover:bg-gray-50 transition-colors disabled:opacity-50 text-left"
             >
               <div className="w-12 h-12 rounded-xl bg-orange-100 flex items-center justify-center shrink-0">
@@ -911,8 +875,7 @@ export default function CheckoutPage() {
           {/* Peeap Card Payment */}
           <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
             <button
-              onClick={() => setShowCardInput(!showCardInput)}
-              disabled={cardPaying}
+              disabled
               className="w-full p-5 flex items-center gap-4 hover:bg-gray-50 transition-colors disabled:opacity-50 text-left"
             >
               <div className="w-12 h-12 rounded-xl bg-indigo-100 flex items-center justify-center shrink-0">
@@ -1006,6 +969,14 @@ export default function CheckoutPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
+      {showPin && (
+        <PinOverlay
+          onSubmit={submitPurchase}
+          onClose={() => { if (!loading) { setShowPin(false); setPinError(null); } }}
+          loading={loading}
+          error={pinError}
+        />
+      )}
       {/* Header */}
       <div className="bg-white border-b">
         <div className="max-w-5xl mx-auto px-4 py-4 flex items-center justify-between">
@@ -1097,7 +1068,10 @@ export default function CheckoutPage() {
                         <button
                           key={addr.id}
                           type="button"
-                          onClick={() => setDeliveryAddress([addr.address_line, addr.city].filter(Boolean).join(', '))}
+                          onClick={() => {
+                            setDeliveryAddress([addr.address_line, addr.city].filter(Boolean).join(', '));
+                            setSelectedAddressId(addr.id === "profile" ? null : addr.id);
+                          }}
                           className={`w-full text-left p-3 rounded-lg border transition-all text-sm ${
                             deliveryAddress === [addr.address_line, addr.city].filter(Boolean).join(', ')
                               ? 'border-emerald-500 bg-emerald-50 ring-1 ring-emerald-500'
@@ -1116,12 +1090,12 @@ export default function CheckoutPage() {
                   <textarea
                     id="address"
                     value={deliveryAddress}
-                    onChange={(e) => setDeliveryAddress(e.target.value)}
+                    onChange={(e) => { setDeliveryAddress(e.target.value); setSelectedAddressId(null); }}
                     placeholder={savedAddresses.length > 0 ? "Or enter a different address..." : "Enter your delivery address..."}
                     rows={2}
                     className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-colors resize-none text-sm"
                   />
-                  {!deliveryAddress && <p className="text-xs text-amber-600 mt-1">Delivery address is required for shipping</p>}
+                  {!selectedAddressId && <p className="text-xs text-amber-600 mt-1">Choose a saved shipping address. A new address must first be saved in your Peeap account.</p>}
                 </div>
                 <div>
                   <label htmlFor="notes" className="block text-sm font-medium text-gray-700 mb-1">

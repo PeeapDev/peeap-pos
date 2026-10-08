@@ -7,6 +7,20 @@ export async function OPTIONS(request: NextRequest) {
   return handleCORS(request) || NextResponse.json({});
 }
 
+async function refreshProductRating(productId: string): Promise<void> {
+  const { data, error } = await supabase.from("product_reviews")
+    .select("rating")
+    .eq("product_id", productId)
+    .eq("is_approved", true);
+  if (error) throw error;
+  const count = data?.length || 0;
+  const average = count ? Math.round((data!.reduce((sum, review) => sum + review.rating, 0) / count) * 100) / 100 : 0;
+  const { error: updateError } = await supabase.from("pos_products")
+    .update({ average_rating: average, total_ratings: count })
+    .eq("id", productId);
+  if (updateError) throw updateError;
+}
+
 // GET /api/marketplace/products/[id]/reviews — Product reviews (public)
 export async function GET(
   request: NextRequest,
@@ -82,7 +96,8 @@ export async function POST(
     const body = await request.json();
     const { rating, review_text, customer_name } = body;
 
-    if (!rating || rating < 1 || rating > 5) {
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5 ||
+        (review_text !== undefined && (typeof review_text !== "string" || review_text.length > 2000))) {
       return NextResponse.json(
         { error: "Rating must be between 1 and 5" },
         { status: 400, headers }
@@ -141,15 +156,17 @@ export async function POST(
         .single();
 
       if (error) throw error;
+      try { await refreshProductRating(params.id); } catch (ratingError) { console.error("Rating refresh failed:", ratingError); }
       return NextResponse.json({ review: data }, { headers });
     }
 
     // Check if verified purchase
     const { data: orders } = await supabase
       .from("store_orders")
-      .select("id")
+      .select("id, store_order_items!inner(product_id)")
       .eq("customer_id", auth.sub)
       .eq("store_id", store.id)
+      .eq("store_order_items.product_id", params.id)
       .in("status", ["delivered", "completed"])
       .limit(1);
 
@@ -170,6 +187,8 @@ export async function POST(
       .single();
 
     if (error) throw error;
+
+    try { await refreshProductRating(params.id); } catch (ratingError) { console.error("Rating refresh failed:", ratingError); }
 
     return NextResponse.json({ review: data }, { status: 201, headers });
   } catch (err) {

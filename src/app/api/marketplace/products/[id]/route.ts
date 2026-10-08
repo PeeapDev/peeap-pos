@@ -15,15 +15,16 @@ export async function GET(
   const headers = corsHeaders(origin);
 
   try {
-    // Fetch product with store info
+    // Stores and products share merchant_id; there is no direct FK to join.
     const { data: product, error: productError } = await supabase
       .from("pos_products")
       .select(
-        "*, category:pos_categories(*), marketplace_category:marketplace_categories(*), store:stores!inner(id, name, slug, logo_url, banner_url, city, is_verified, average_rating, offers_delivery, delivery_fee, free_delivery_minimum, minimum_order)"
+        "*, category:pos_categories(*), marketplace_category:marketplace_categories(*)"
       )
       .eq("id", params.id)
       .eq("is_active", true)
       .eq("is_published", true)
+      .eq("show_in_marketplace", true)
       .single();
 
     if (productError || !product) {
@@ -32,6 +33,13 @@ export async function GET(
         { status: 404, headers }
       );
     }
+
+    const { data: store } = await supabase.from("stores")
+      .select("id, name, slug, logo_url, banner_url, city, is_verified, average_rating, offers_delivery, delivery_fee, free_delivery_minimum, minimum_order")
+      .eq("merchant_id", product.merchant_id)
+      .eq("is_published", true)
+      .single();
+    if (!store) return NextResponse.json({ error: "Product not found" }, { status: 404, headers });
 
     // Fetch reviews
     const { data: reviews } = await supabase
@@ -49,6 +57,7 @@ export async function GET(
       .eq("merchant_id", product.merchant_id)
       .eq("is_active", true)
       .eq("is_published", true)
+      .eq("show_in_marketplace", true)
       .neq("id", params.id)
       .order("order_count", { ascending: false })
       .limit(6);
@@ -62,7 +71,7 @@ export async function GET(
 
     return NextResponse.json(
       {
-        product: { ...product, reviews: reviews || [] },
+        product: { ...product, store, reviews: reviews || [] },
         related_products: relatedProducts || [],
       },
       { headers }

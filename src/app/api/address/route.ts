@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { authenticateRequest } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -12,9 +13,11 @@ const MAIN_SUPABASE_KEY = process.env.MAIN_SUPABASE_SERVICE_KEY || "";
  */
 export async function GET(request: NextRequest) {
   const userId = request.nextUrl.searchParams.get("user_id");
-  if (!userId || !MAIN_SUPABASE_KEY) {
-    return NextResponse.json({ addresses: [] });
-  }
+  if (!userId) return NextResponse.json({ error: "user_id required" }, { status: 400 });
+  const auth = await authenticateRequest(request);
+  if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (auth.sub !== userId) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (!MAIN_SUPABASE_KEY) return NextResponse.json({ error: "Not configured" }, { status: 503 });
 
   try {
     const db = createClient(MAIN_SUPABASE_URL, MAIN_SUPABASE_KEY, { auth: { persistSession: false } });
