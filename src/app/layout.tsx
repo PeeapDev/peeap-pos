@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import StoreAuthModal from "@/components/shop/StoreAuthModal";
 
 export const metadata: Metadata = {
   title: "Peeap School Store | Books, Bags, Uniforms & Supplies",
@@ -40,6 +41,7 @@ export default function RootLayout({
       </head>
       <body className="antialiased">
         {children}
+        <StoreAuthModal />
         <script
           dangerouslySetInnerHTML={{
             __html: `

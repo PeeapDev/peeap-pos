@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 
 interface User {
   id: string;
@@ -14,9 +14,68 @@ interface User {
   merchant_id?: string;
 }
 
-// Login happens on my.peeap.com — the main Peeap platform
 const PEEAP_URL = process.env.NEXT_PUBLIC_PEEAP_URL || "https://my.peeap.com";
 const STORE_URL = process.env.NEXT_PUBLIC_STORE_URL || "https://store.peeap.com";
+
+type StoreSession = { token: string; user: User };
+let bootstrapPromise: Promise<StoreSession | null> | null = null;
+let lastFocusCheckAt = 0;
+
+async function exchangeSsoToken(ssoToken: string): Promise<StoreSession | null> {
+  const res = await fetch("/api/auth/sso", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token: ssoToken }),
+    cache: "no-store",
+  });
+  if (!res.ok) return null;
+  const data = await res.json();
+  return data?.user && data?.token
+    ? { token: data.token, user: buildUserFromData(data.user) }
+    : null;
+}
+
+async function bootstrapSession(): Promise<StoreSession | null> {
+  const savedToken = localStorage.getItem("pos_token");
+  const savedUser = localStorage.getItem("pos_user");
+  if (savedToken && savedUser) {
+    try {
+      const check = await fetch("/api/auth/check", {
+        headers: { Authorization: `Session ${savedToken}` }, cache: "no-store",
+      });
+      const result = check.ok ? await check.json() : null;
+      const profile = JSON.parse(savedUser) as User;
+      if (result?.user?.id === profile.id) return { token: savedToken, user: profile };
+    } catch { /* Invalid stored session: try the main Peeap session below. */ }
+    localStorage.removeItem("pos_token");
+    localStorage.removeItem("pos_user");
+  }
+
+  // Same-site credentials are sent only to my.peeap.com; the store receives a
+  // one-minute, one-use handoff, never the main Peeap session cookie.
+  if (sessionStorage.getItem("store_signed_out")) return null;
+  try {
+    const bridge = await fetch(`${PEEAP_URL}/store-session`, {
+      method: "POST", credentials: "include", cache: "no-store",
+    });
+    if (!bridge.ok) return null;
+    const data = await bridge.json();
+    if (typeof data.token !== "string") return null;
+    return await exchangeSsoToken(data.token);
+  } catch { return null; }
+}
+
+function sharedBootstrap(): Promise<StoreSession | null> {
+  if (!bootstrapPromise) {
+    bootstrapPromise = bootstrapSession().finally(() => { bootstrapPromise = null; });
+  }
+  return bootstrapPromise;
+}
+
+export async function resumePeeapSession(): Promise<StoreSession | null> {
+  sessionStorage.removeItem("store_signed_out");
+  return sharedBootstrap();
+}
 
 function buildUserFromData(data: any): User {
   return {
@@ -40,7 +99,6 @@ export function useAuth() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [token, setToken] = useState<string | null>(null);
-  const popupRef = useRef<Window | null>(null);
 
   // Helper: persist session and notify all components
   const persistSession = useCallback((accessToken: string, u: User) => {
@@ -53,22 +111,11 @@ export function useAuth() {
   }, []);
 
   useEffect(() => {
-    const stored = localStorage.getItem("pos_token");
-    const storedUser = localStorage.getItem("pos_user");
-    if (stored && storedUser) {
-      setToken(stored);
-      try {
-        setUser(JSON.parse(storedUser));
-      } catch {
-        localStorage.removeItem("pos_user");
-      }
-    }
-
     // Listen for auth changes from other useAuth instances
     const onAuthChanged = (e: Event) => {
       const detail = (e as CustomEvent).detail;
-      if (detail?.token) setToken(detail.token);
-      if (detail?.user) setUser(detail.user);
+      setToken(detail?.token || null);
+      setUser(detail?.user || null);
     };
     window.addEventListener("auth-changed", onAuthChanged);
 
@@ -82,30 +129,48 @@ export function useAuth() {
     };
     window.addEventListener("storage", onStorage);
 
-    // Auto-exchange SSO token from URL ?token= param (after login redirect)
+    // A customer may sign in on my.peeap.com after opening the store. When
+    // this tab regains focus, quietly retry the same-site handoff; never
+    // override an explicit store logout or an established store account.
+    const onFocus = () => {
+      if (sessionStorage.getItem("store_signed_out") || localStorage.getItem("pos_token")) return;
+      if (Date.now() - lastFocusCheckAt < 2_000) return;
+      lastFocusCheckAt = Date.now();
+      sharedBootstrap().then((session) => {
+        if (!cancelled && session) persistSession(session.token, session.user);
+      }).catch(() => {});
+    };
+    const onVisibility = () => { if (document.visibilityState === "visible") onFocus(); };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibility);
+
+    // Legacy redirect callbacks are supported, but new handoffs use POST and
+    // never put tokens in the browser URL.
     const params = new URLSearchParams(window.location.search);
     const ssoToken = params.get("token");
+    let cancelled = false;
     if (ssoToken) {
       const url = new URL(window.location.href);
       url.searchParams.delete("token");
       window.history.replaceState({}, "", url.toString());
 
-      fetch(`/api/auth/sso?token=${encodeURIComponent(ssoToken)}`)
-        .then((res) => (res.ok ? res.json() : null))
-        .then((data) => {
-          if (data?.user) {
-            persistSession(data.token || ssoToken, buildUserFromData(data.user));
-          }
-          setLoading(false);
-        })
-        .catch(() => setLoading(false));
+      exchangeSsoToken(ssoToken)
+        .then((session) => { if (!cancelled && session) persistSession(session.token, session.user); })
+        .catch(() => {})
+        .finally(() => { if (!cancelled) setLoading(false); });
     } else {
-      setLoading(false);
+      sharedBootstrap()
+        .then((session) => { if (!cancelled && session) persistSession(session.token, session.user); })
+        .catch(() => {})
+        .finally(() => { if (!cancelled) setLoading(false); });
     }
 
     return () => {
+      cancelled = true;
       window.removeEventListener("auth-changed", onAuthChanged);
       window.removeEventListener("storage", onStorage);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [persistSession]);
 
@@ -117,87 +182,17 @@ export function useAuth() {
     window.location.href = `${PEEAP_URL}/login?redirect=${encodeURIComponent(storeRedirect)}`;
   }, []);
 
-  /**
-   * Open a popup window for login. User stays on the current page.
-   * Returns a promise that resolves to true on success.
-   */
+  /** Opens the store's in-page login/register sheet without navigation. */
   const loginPopup = useCallback((): Promise<boolean> => {
     return new Promise((resolve) => {
-      // Size and center the popup
-      const w = 440;
-      const h = 560;
-      const left = window.screenX + (window.outerWidth - w) / 2;
-      const top = window.screenY + (window.outerHeight - h) / 2;
-
-      const popupUrl = `${PEEAP_URL}/auth/signin?mode=popup&origin=${encodeURIComponent(STORE_URL)}`;
-      const popup = window.open(
-        popupUrl,
-        "peeap_login",
-        `width=${w},height=${h},left=${left},top=${top},resizable=yes,scrollbars=yes`
-      );
-
-      popupRef.current = popup;
-
-      if (!popup) {
-        // Popup blocked — fallback to redirect
-        login();
-        resolve(false);
-        return;
-      }
-
-      // Listen for postMessage from the popup
-      const handler = async (event: MessageEvent) => {
-        // Validate origin
-        const peeapOrigin = new URL(PEEAP_URL).origin;
-        if (event.origin !== peeapOrigin) return;
-        if (event.data?.type !== "PEEAP_AUTH_SUCCESS") return;
-
-        window.removeEventListener("message", handler);
-        clearInterval(pollClosed);
-
-        const { ssoToken } = event.data;
-
-        if (ssoToken) {
-          // Exchange SSO token for a validated session via our API
-          try {
-            const res = await fetch(
-              `/api/auth/sso?token=${encodeURIComponent(ssoToken)}`
-            );
-            if (res.ok) {
-              const data = await res.json();
-              if (data?.user) {
-                persistSession(
-                  data.token || ssoToken,
-                  buildUserFromData(data.user)
-                );
-                resolve(true);
-                return;
-              }
-            }
-          } catch {}
-        }
-        // A popup profile alone is not proof of identity. Only a token
-        // validated by the POS server can establish a store session.
-        resolve(false);
-      };
-
-      window.addEventListener("message", handler);
-
-      // Poll to detect if popup was closed without completing login
-      const pollClosed = setInterval(() => {
-        if (popup.closed) {
-          clearInterval(pollClosed);
-          window.removeEventListener("message", handler);
-          popupRef.current = null;
-          resolve(false);
-        }
-      }, 500);
+      window.dispatchEvent(new CustomEvent("store-auth-open", { detail: { resolve } }));
     });
-  }, [login, persistSession]);
+  }, []);
 
   const logout = useCallback(() => {
     localStorage.removeItem("pos_token");
     localStorage.removeItem("pos_user");
+    sessionStorage.setItem("store_signed_out", "1");
     setUser(null);
     setToken(null);
     window.dispatchEvent(new CustomEvent("auth-changed", { detail: { token: null, user: null } }));
@@ -213,15 +208,9 @@ export function useAuth() {
   const exchangeToken = useCallback(
     async (code: string): Promise<boolean> => {
       try {
-        const res = await fetch(
-          `/api/auth/sso?token=${encodeURIComponent(code)}`
-        );
-        if (!res.ok) return false;
-
-        const data = await res.json();
-        if (!data.user) return false;
-
-        persistSession(data.token || code, buildUserFromData(data.user));
+        const session = await exchangeSsoToken(code);
+        if (!session) return false;
+        persistSession(session.token, session.user);
         return true;
       } catch {
         return false;

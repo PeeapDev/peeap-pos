@@ -7,6 +7,7 @@ import AddToCartButton from "@/components/shop/AddToCartButton";
 import BuyNowButton from "@/components/shop/BuyNowButton";
 import CartIcon from "@/components/shop/CartIcon";
 import ShopUserButton from "@/components/shop/ShopUserButton";
+import ProductDeliveryDetails from "@/components/shop/ProductDeliveryDetails";
 import { isDemoMerchant } from "@/lib/marketplace-demo";
 
 const STORE_URL =
@@ -244,25 +245,12 @@ export default async function ProductPage({ params }: Props) {
                 )}
               </div>
 
-              {/* Delivery Info */}
-              {store.offers_delivery && (
-                <div className="mt-5 bg-gradient-to-r from-violet-50 to-indigo-50 border border-violet-200 rounded-xl p-3.5">
-                  <div className="flex items-center gap-2 text-violet-800 font-semibold text-sm">
-                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h1m8-1a1 1 0 01-1 1H9m4-1V8a1 1 0 011-1h2.586a1 1 0 01.707.293l3.414 3.414a1 1 0 01.293.707V16a1 1 0 01-1 1h-1m-6-1a1 1 0 001 1h1M5 17a2 2 0 104 0m-4 0a2 2 0 114 0m6 0a2 2 0 104 0m-4 0a2 2 0 114 0" />
-                    </svg>
-                    Get it delivered to your door
-                  </div>
-                  <p className="text-xs text-violet-600 mt-1">
-                    {store.free_delivery_minimum && product.price >= store.free_delivery_minimum
-                      ? "Free delivery on this item!"
-                      : store.delivery_fee > 0
-                        ? `Delivery from NLe ${Number(store.delivery_fee).toLocaleString()} — arrives in minutes`
-                        : "Free delivery — arrives in minutes"
-                    }
-                  </p>
-                </div>
-              )}
+              <ProductDeliveryDetails
+                offersDelivery={!!store.offers_delivery}
+                deliveryFee={Number(store.delivery_fee || 0)}
+                freeDeliveryMinimum={Number(store.free_delivery_minimum || 0)}
+                productPrice={Number(product.price)}
+              />
 
               {/* Add to Cart + Buy Now */}
               <div className="mt-6 space-y-3">

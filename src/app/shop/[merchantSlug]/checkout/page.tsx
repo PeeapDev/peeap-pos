@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
 import {
@@ -214,16 +214,13 @@ function PinOverlay({
 export default function CheckoutPage() {
   const params = useParams();
   const router = useRouter();
-  const searchParams = useSearchParams();
   const merchantSlug = params.merchantSlug as string;
 
   const {
     user,
     token,
     loading: authLoading,
-    login,
     loginPopup,
-    exchangeToken,
   } = useAuth();
 
   // ─── State ───
@@ -238,7 +235,6 @@ export default function CheckoutPage() {
   const [storeOffersDelivery, setStoreOffersDelivery] = useState(false);
   const [storeLoading, setStoreLoading] = useState(true);
   const [storeError, setStoreError] = useState<string | null>(null);
-  const [exchangingToken, setExchangingToken] = useState(false);
   const [loggingIn, setLoggingIn] = useState(false);
 
   // Form state
@@ -246,6 +242,9 @@ export default function CheckoutPage() {
   const [selectedAddressId, setSelectedAddressId] = useState<string | null>(null);
   const [savedAddresses, setSavedAddresses] = useState<Array<{ id: string; address_line: string; city: string; is_default: boolean }>>([]);
   const [loadingAddress, setLoadingAddress] = useState(false);
+  const [showNewAddress, setShowNewAddress] = useState(false);
+  const [savingAddress, setSavingAddress] = useState(false);
+  const [addressForm, setAddressForm] = useState({ full_name: "", phone: "", address_line: "", city: "" });
   const [notes, setNotes] = useState("");
 
   // Payment phase state
@@ -264,22 +263,6 @@ export default function CheckoutPage() {
   const [cardPin, setCardPin] = useState("");
 
   // ─── Effects ───
-
-  // Handle auth callback
-  useEffect(() => {
-    const code = searchParams.get("token");
-    if (code && !user && !authLoading) {
-      setExchangingToken(true);
-      exchangeToken(code).then((success) => {
-        setExchangingToken(false);
-        if (success) {
-          const url = new URL(window.location.href);
-          url.searchParams.delete("token");
-          window.history.replaceState({}, "", url.toString());
-        }
-      });
-    }
-  }, [searchParams, user, authLoading, exchangeToken]);
 
   // Load cart and store
   useEffect(() => {
@@ -328,13 +311,14 @@ export default function CheckoutPage() {
     })
       .then((r) => (r.ok ? r.json() : { addresses: [] }))
       .then((data) => {
-        const addrs = data.addresses || [];
+        const addrs = (data.addresses || []).filter((address: { id: string }) => address.id !== "profile");
         setSavedAddresses(addrs);
         // Auto-fill with default address
-        const defaultAddr = addrs.find((a: any) => a.is_default) || addrs[0];
+        const preferredId = sessionStorage.getItem("store_delivery_address_id");
+        const defaultAddr = addrs.find((a: any) => a.id === preferredId) || addrs.find((a: any) => a.is_default) || addrs[0];
         if (defaultAddr && !deliveryAddress) {
           setDeliveryAddress([defaultAddr.address_line, defaultAddr.city].filter(Boolean).join(', '));
-          if (defaultAddr.id !== "profile") setSelectedAddressId(defaultAddr.id);
+          setSelectedAddressId(defaultAddr.id);
         }
       })
       .catch(() => {})
@@ -381,6 +365,31 @@ export default function CheckoutPage() {
     const signedIn = await loginPopup();
     if (!signedIn) setError("Peeap sign-in did not complete. Please try again.");
     setLoggingIn(false);
+  };
+
+  const saveNewAddress = async () => {
+    if (!token || savingAddress) return;
+    setSavingAddress(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/address", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Session ${token}` },
+        body: JSON.stringify(addressForm),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.address?.id) throw new Error(result.error || "Could not save delivery address");
+      const address = result.address as { id: string; address_line: string; city: string; is_default: boolean };
+      setSavedAddresses((current) => [...current, address]);
+      setSelectedAddressId(address.id);
+      setDeliveryAddress([address.address_line, address.city].filter(Boolean).join(", "));
+      sessionStorage.setItem("store_delivery_address_id", address.id);
+      setShowNewAddress(false);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not save delivery address");
+    } finally {
+      setSavingAddress(false);
+    }
   };
 
   const PEEAP_API = process.env.NEXT_PUBLIC_PEEAP_API_URL || "https://api.peeap.com";
@@ -545,13 +554,13 @@ export default function CheckoutPage() {
   // RENDER: Loading
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-  if (!mounted || storeLoading || authLoading || exchangingToken) {
+  if (!mounted || storeLoading || authLoading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
           <Loader2 className="w-8 h-8 animate-spin text-emerald-600 mx-auto mb-3" />
           <p className="text-gray-500">
-            {exchangingToken ? "Signing you in..." : "Loading checkout..."}
+            Loading checkout...
           </p>
         </div>
       </div>
@@ -1056,7 +1065,7 @@ export default function CheckoutPage() {
               <div className="space-y-4">
                 <div>
                   <div className="flex items-center justify-between mb-1">
-                    <label htmlFor="address" className="text-sm font-medium text-gray-700">Delivery Address</label>
+                    <span className="text-sm font-medium text-gray-700">Delivery Address</span>
                     {savedAddresses.length > 0 && (
                       <span className="text-xs text-emerald-600 font-medium">{savedAddresses.length} saved</span>
                     )}
@@ -1070,7 +1079,8 @@ export default function CheckoutPage() {
                           type="button"
                           onClick={() => {
                             setDeliveryAddress([addr.address_line, addr.city].filter(Boolean).join(', '));
-                            setSelectedAddressId(addr.id === "profile" ? null : addr.id);
+                            setSelectedAddressId(addr.id);
+                            sessionStorage.setItem("store_delivery_address_id", addr.id);
                           }}
                           className={`w-full text-left p-3 rounded-lg border transition-all text-sm ${
                             deliveryAddress === [addr.address_line, addr.city].filter(Boolean).join(', ')
@@ -1087,15 +1097,27 @@ export default function CheckoutPage() {
                       ))}
                     </div>
                   )}
-                  <textarea
-                    id="address"
-                    value={deliveryAddress}
-                    onChange={(e) => { setDeliveryAddress(e.target.value); setSelectedAddressId(null); }}
-                    placeholder={savedAddresses.length > 0 ? "Or enter a different address..." : "Enter your delivery address..."}
-                    rows={2}
-                    className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-colors resize-none text-sm"
-                  />
-                  {!selectedAddressId && <p className="text-xs text-amber-600 mt-1">Choose a saved shipping address. A new address must first be saved in your Peeap account.</p>}
+                  {loadingAddress && <p className="text-sm text-gray-500">Loading saved addresses…</p>}
+                  {!selectedAddressId && !loadingAddress && <p className="text-xs text-amber-700 mt-1">Save or choose a delivery address before paying.</p>}
+                  <button type="button" onClick={() => {
+                    setAddressForm((current) => ({
+                      ...current,
+                      full_name: current.full_name || user?.name || "",
+                      phone: current.phone || user?.phone || "",
+                    }));
+                    setShowNewAddress((current) => !current);
+                  }} className="mt-3 text-sm font-semibold text-emerald-700 hover:underline">
+                    {showNewAddress ? "Cancel new address" : "Add a delivery address"}
+                  </button>
+                  {showNewAddress && (
+                    <div className="mt-3 space-y-3 rounded-xl border border-gray-200 bg-gray-50 p-4">
+                      <input aria-label="Recipient full name" placeholder="Recipient full name" value={addressForm.full_name} onChange={(e) => setAddressForm({ ...addressForm, full_name: e.target.value })} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm" />
+                      <input aria-label="Recipient phone" type="tel" placeholder="Recipient phone" value={addressForm.phone} onChange={(e) => setAddressForm({ ...addressForm, phone: e.target.value })} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm" />
+                      <input aria-label="Street address" placeholder="Street address and landmark" value={addressForm.address_line} onChange={(e) => setAddressForm({ ...addressForm, address_line: e.target.value })} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm" />
+                      <input aria-label="City" placeholder="City" value={addressForm.city} onChange={(e) => setAddressForm({ ...addressForm, city: e.target.value })} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm" />
+                      <button type="button" onClick={saveNewAddress} disabled={savingAddress} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">{savingAddress ? "Saving…" : "Save delivery address"}</button>
+                    </div>
+                  )}
                 </div>
                 <div>
                   <label htmlFor="notes" className="block text-sm font-medium text-gray-700 mb-1">

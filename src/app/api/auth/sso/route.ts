@@ -14,19 +14,16 @@ function getMainSupabase() {
 }
 
 /**
- * GET /api/auth/sso?token=xxx
+ * POST /api/auth/sso { token }
  *
  * Validates an SSO token from my.peeap.com and returns the user data.
  * This is the store's SSO callback handler.
  *
  * Flow:
- * 1. User clicks "Login" on store → redirected to my.peeap.com/login
- * 2. User logs in → my.peeap.com creates SSO token + redirects back to store
- * 3. Store calls this endpoint to validate the token and get user info
+ * Receives a short-lived handoff from the same-site my.peeap.com bridge and
+ * exchanges it for a store session. The token never enters an API URL.
  */
-export async function GET(request: NextRequest) {
-  const { searchParams } = new URL(request.url);
-  const token = searchParams.get("token");
+async function exchange(token: string | null) {
 
   if (!token) {
     return NextResponse.json(
@@ -62,6 +59,10 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    if (!["store", "external"].includes(ssoToken.target_app)) {
+      return NextResponse.json({ error: "Token is not for the store" }, { status: 401 });
+    }
+
     // Mark token as used (one-time use)
     const { data: redeemed, error: redeemError } = await supabase
       .from("sso_tokens")
@@ -94,7 +95,7 @@ export async function GET(request: NextRequest) {
     const { error: sessionError } = await supabase.from('sso_tokens').insert({
       user_id: user.id,
       token: sessionToken,
-      expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), // 30 days
+      expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
       redirect_path: '/store-session',
     });
     if (sessionError) {
@@ -121,4 +122,10 @@ export async function GET(request: NextRequest) {
       { status: 500 }
     );
   }
+}
+
+// Handoff tokens must not appear in browser URLs, referrers, or access logs.
+export async function POST(request: NextRequest) {
+  const body = await request.json().catch(() => ({}));
+  return exchange(typeof body.token === "string" ? body.token : null);
 }
