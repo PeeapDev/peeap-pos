@@ -2,9 +2,9 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Peeap Store - POS & E-Commerce",
+  title: "Peeap School Store | Books, Bags, Uniforms & Supplies",
   description:
-    "Discover local stores and shop online with Peeap Store. Every merchant gets their own Google-indexed online store.",
+    "Discover books, school bags, uniforms, learning devices and classroom supplies from Peeap sellers. School payments and products in one place.",
   metadataBase: new URL(
     process.env.NEXT_PUBLIC_STORE_URL || "https://store.peeap.com"
   ),
@@ -12,7 +12,7 @@ export const metadata: Metadata = {
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
-    title: "Peeap POS",
+    title: "Peeap School Store",
   },
   formatDetection: {
     telephone: false,

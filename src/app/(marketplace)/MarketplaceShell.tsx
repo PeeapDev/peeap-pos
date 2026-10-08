@@ -91,7 +91,7 @@ export default function MarketplaceShell({
             </div>
           </div>
           <div className="mt-8 pt-6 border-t text-center text-xs text-gray-400">
-            Powered by Peeap &mdash; Payments for Sierra Leone
+            Powered by Peeap &mdash; Payments and products for education
           </div>
         </div>
       </footer>

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
+import { DEMO_MERCHANT_FILTER } from "@/lib/marketplace-demo";
 
 const STORE_URL =
   process.env.NEXT_PUBLIC_STORE_URL || "https://store.peeap.com";
@@ -24,6 +25,8 @@ export async function GET() {
       )
       .eq("is_active", true)
       .eq("is_published", true)
+      .eq("show_in_marketplace", true)
+      .not("merchant_id", "in", DEMO_MERCHANT_FILTER)
       .order("created_at", { ascending: false })
       .limit(10000);
 
@@ -37,7 +40,8 @@ export async function GET() {
       .from("stores")
       .select("merchant_id, slug, name")
       .in("merchant_id", merchantIds)
-      .eq("is_published", true);
+      .eq("is_published", true)
+      .not("merchant_id", "in", DEMO_MERCHANT_FILTER);
 
     const storeMap = new Map(
       (stores || []).map((s) => [s.merchant_id, s])
@@ -83,9 +87,9 @@ export async function GET() {
     const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0" xmlns:g="http://base.google.com/ns/1.0">
   <channel>
-    <title>Peeap Store - Product Feed</title>
+    <title>Peeap School Store - Product Feed</title>
     <link>${STORE_URL}</link>
-    <description>Products from Peeap Store merchants</description>
+    <description>School products and supplies from Peeap sellers</description>
 ${items.join("\n")}
   </channel>
 </rss>`;

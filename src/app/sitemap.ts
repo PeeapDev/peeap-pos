@@ -1,5 +1,6 @@
 import { MetadataRoute } from "next";
 import { createClient } from "@supabase/supabase-js";
+import { DEMO_MERCHANT_FILTER } from "@/lib/marketplace-demo";
 
 const STORE_URL =
   process.env.NEXT_PUBLIC_STORE_URL || "https://store.peeap.com";
@@ -25,7 +26,8 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     const { data: stores } = await supabase
       .from("stores")
       .select("slug, updated_at")
-      .eq("is_published", true);
+      .eq("is_published", true)
+      .not("merchant_id", "in", DEMO_MERCHANT_FILTER);
 
     for (const store of stores || []) {
       entries.push({
@@ -41,7 +43,9 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       .from("pos_products")
       .select("slug, merchant_id, updated_at")
       .eq("is_active", true)
-      .eq("is_published", true);
+      .eq("is_published", true)
+      .eq("show_in_marketplace", true)
+      .not("merchant_id", "in", DEMO_MERCHANT_FILTER);
 
     if (products && stores) {
       const storeMap = new Map(
@@ -55,7 +59,8 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       const { data: storesWithMerchant } = await supabase
         .from("stores")
         .select("merchant_id, slug")
-        .eq("is_published", true);
+        .eq("is_published", true)
+        .not("merchant_id", "in", DEMO_MERCHANT_FILTER);
 
       const merchantToSlug = new Map(
         (storesWithMerchant || []).map((s) => [s.merchant_id, s.slug])

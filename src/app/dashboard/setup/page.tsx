@@ -15,10 +15,10 @@ import {
 import { useAuth } from "@/hooks/useAuth";
 
 const CATEGORY_TEMPLATES = [
-  { name: "Food", color: "#EF4444", description: "Food items and meals" },
-  { name: "Drinks", color: "#3B82F6", description: "Beverages and drinks" },
-  { name: "Electronics", color: "#8B5CF6", description: "Electronic devices and accessories" },
-  { name: "Clothing", color: "#EC4899", description: "Apparel and fashion items" },
+  { name: "School Bags", color: "#2563EB", description: "Backpacks, book bags, and lunch bags" },
+  { name: "Books & Stationery", color: "#7C3AED", description: "Textbooks, readers, exercise books, and pens" },
+  { name: "Uniforms & Shoes", color: "#0F766E", description: "School clothing and shoes" },
+  { name: "Learning Devices", color: "#0284C7", description: "Calculators, tablets, and learning technology" },
   { name: "General", color: "#6B7280", description: "General merchandise" },
 ];
 

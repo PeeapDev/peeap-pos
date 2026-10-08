@@ -32,6 +32,10 @@ interface HomepageData {
 }
 
 export default function MarketplaceHome({ data }: { data: HomepageData }) {
+  // The original generic campaign banners were seeded for a demo catalogue.
+  // Preserve custom banners while letting the school-focused default hero lead.
+  const demoBannerTitles = new Set(["Shop Local, Pay Easy", "Start Selling Today", "New Arrivals Weekly"]);
+  const banners = data.banners.filter((banner) => !demoBannerTitles.has(banner.title));
   return (
     <div className="min-h-screen bg-gray-50">
       <MarketplaceHeader
@@ -43,7 +47,7 @@ export default function MarketplaceHome({ data }: { data: HomepageData }) {
 
       {/* Hero Banners */}
       <HeroBanner
-        banners={data.banners.map((b) => ({
+        banners={banners.map((b) => ({
           ...b,
           subtitle: b.subtitle || undefined,
           link_url: b.link_url || undefined,
@@ -68,7 +72,7 @@ export default function MarketplaceHome({ data }: { data: HomepageData }) {
         {data.trending_products.length > 0 && (
           <section>
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-xl font-bold text-gray-900">Trending</h2>
+              <h2 className="text-xl font-bold text-gray-900">From Peeap sellers</h2>
               <Link
                 href="/search?sort=popular"
                 className="text-sm text-green-600 hover:text-green-700 font-medium flex items-center gap-1"
@@ -141,17 +145,17 @@ export default function MarketplaceHome({ data }: { data: HomepageData }) {
           data.new_arrivals.length === 0 && (
             <div className="text-center py-20">
               <h2 className="text-2xl font-bold text-gray-900 mb-2">
-                Welcome to Peeap Store
+                Welcome to Peeap School Store
               </h2>
               <p className="text-gray-500 max-w-md mx-auto mb-6">
-                The marketplace is setting up. Be the first merchant to list
-                your products and reach customers across Sierra Leone.
+                Help families and schools find the books, bags, uniforms and
+                supplies they need. Be the first seller to list a school product.
               </p>
               <Link
                 href="/dashboard"
                 className="inline-flex items-center gap-2 px-6 py-3 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 transition-colors"
               >
-                Start Selling
+                List school products
               </Link>
             </div>
           )}
@@ -207,7 +211,7 @@ export default function MarketplaceHome({ data }: { data: HomepageData }) {
             </div>
           </div>
           <div className="mt-8 pt-6 border-t text-center text-xs text-gray-400">
-            Powered by Peeap &mdash; Payments for Sierra Leone
+            Powered by Peeap &mdash; Payments and products for education
           </div>
         </div>
       </footer>

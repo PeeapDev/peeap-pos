@@ -7,6 +7,7 @@ import CartIcon from "@/components/shop/CartIcon";
 import ShopUserButton from "@/components/shop/ShopUserButton";
 import QuickAddToCartButton from "@/components/shop/QuickAddToCartButton";
 import LiveActivityFeed from "@/components/marketplace/LiveActivityFeed";
+import { isDemoMerchant } from "@/lib/marketplace-demo";
 
 const STORE_URL =
   process.env.NEXT_PUBLIC_STORE_URL || "https://store.peeap.com";
@@ -27,12 +28,12 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const supabase = getSupabase();
   const { data: store } = await supabase
     .from("stores")
-    .select("name, description, logo_url")
+    .select("name, description, logo_url, merchant_id")
     .eq("slug", params.merchantSlug)
     .eq("is_published", true)
     .single();
 
-  if (!store) return { title: "Store Not Found" };
+  if (!store || isDemoMerchant(store.merchant_id)) return { title: "Store Not Found" };
 
   return {
     title: `${store.name} | Peeap Store`,
@@ -98,7 +99,7 @@ export default async function StorePage({ params }: Props) {
     .eq("is_published", true)
     .single();
 
-  if (!store) notFound();
+  if (!store || isDemoMerchant(store.merchant_id)) notFound();
 
   const [productsRes, categoriesRes, reviewsRes, recentOrdersRes] = await Promise.all([
     supabase

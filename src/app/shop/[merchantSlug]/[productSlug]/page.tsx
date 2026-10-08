@@ -7,6 +7,7 @@ import AddToCartButton from "@/components/shop/AddToCartButton";
 import BuyNowButton from "@/components/shop/BuyNowButton";
 import CartIcon from "@/components/shop/CartIcon";
 import ShopUserButton from "@/components/shop/ShopUserButton";
+import { isDemoMerchant } from "@/lib/marketplace-demo";
 
 const STORE_URL =
   process.env.NEXT_PUBLIC_STORE_URL || "https://store.peeap.com";
@@ -33,7 +34,7 @@ async function getStoreAndProduct(merchantSlug: string, productSlug: string) {
     .eq("is_published", true)
     .single();
 
-  if (!store) return { store: null, product: null };
+  if (!store || isDemoMerchant(store.merchant_id)) return { store: null, product: null };
 
   const { data: product } = await supabase
     .from("pos_products")
