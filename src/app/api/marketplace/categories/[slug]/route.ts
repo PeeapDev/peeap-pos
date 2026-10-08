@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { corsHeaders, handleCORS } from "@/lib/cors";
 import { supabase } from "@/lib/supabase";
+import { DEMO_MERCHANT_FILTER } from "@/lib/marketplace-demo";
 
 export async function OPTIONS(request: NextRequest) {
   return handleCORS(request) || NextResponse.json({});
@@ -51,7 +52,8 @@ export async function GET(
     const { data: publishedStores, error: storesError } = await supabase
       .from("stores")
       .select("id, merchant_id, name, slug, logo_url, city, is_verified")
-      .eq("is_published", true);
+      .eq("is_published", true)
+      .not("merchant_id", "in", DEMO_MERCHANT_FILTER);
     if (storesError) throw storesError;
     if (!publishedStores?.length) {
       return NextResponse.json({ category, products: [], total: 0, page, per_page: perPage }, { headers });

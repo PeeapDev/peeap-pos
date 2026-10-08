@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { corsHeaders, handleCORS } from "@/lib/cors";
 import { supabase } from "@/lib/supabase";
+import { DEMO_MERCHANT_FILTER } from "@/lib/marketplace-demo";
 
 export async function OPTIONS(request: NextRequest) {
   return handleCORS(request) || NextResponse.json({});
@@ -26,7 +27,8 @@ export async function GET(request: NextRequest) {
   try {
     let storesQuery = supabase.from("stores")
       .select("id, merchant_id, name, slug, logo_url, city, is_verified, average_rating, offers_delivery")
-      .eq("is_published", true);
+      .eq("is_published", true)
+      .not("merchant_id", "in", DEMO_MERCHANT_FILTER);
     if (city) storesQuery = storesQuery.ilike("city", `%${city}%`);
     const { data: publishedStores, error: storesError } = await storesQuery;
     if (storesError) throw storesError;

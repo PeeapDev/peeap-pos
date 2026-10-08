@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { corsHeaders, handleCORS } from "@/lib/cors";
 import { supabase } from "@/lib/supabase";
 import { checkoutSchema } from "@/lib/validation";
+import { isDemoMerchant } from "@/lib/marketplace-demo";
 import { initiatePayment } from "@/lib/api-client";
 import { authenticateRequest } from "@/lib/auth";
 import { getShippingQuote, createDeliveryJob } from "@/lib/shipping-client";
@@ -87,7 +88,7 @@ export async function POST(request: NextRequest) {
       .eq("is_published", true)
       .single();
 
-    if (storeError || !store) {
+    if (storeError || !store || isDemoMerchant(store.merchant_id)) {
       return NextResponse.json(
         { error: "Store not found" },
         { status: 404, headers }

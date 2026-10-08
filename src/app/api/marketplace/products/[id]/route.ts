@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { corsHeaders, handleCORS } from "@/lib/cors";
 import { supabase } from "@/lib/supabase";
+import { isDemoMerchant } from "@/lib/marketplace-demo";
 
 export async function OPTIONS(request: NextRequest) {
   return handleCORS(request) || NextResponse.json({});
@@ -27,7 +28,7 @@ export async function GET(
       .eq("show_in_marketplace", true)
       .single();
 
-    if (productError || !product) {
+    if (productError || !product || isDemoMerchant(product.merchant_id)) {
       return NextResponse.json(
         { error: "Product not found" },
         { status: 404, headers }

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { corsHeaders, handleCORS } from "@/lib/cors";
 import { supabase } from "@/lib/supabase";
+import { DEMO_MERCHANT_FILTER } from "@/lib/marketplace-demo";
 
 export async function OPTIONS(request: NextRequest) {
   return handleCORS(request) || NextResponse.json({});
@@ -30,7 +31,8 @@ async function attachStores(products: any[]): Promise<any[]> {
     .from("stores")
     .select("id, merchant_id, name, slug, logo_url, city, is_verified, average_rating")
     .in("merchant_id", merchantIds)
-    .eq("is_published", true);
+    .eq("is_published", true)
+    .not("merchant_id", "in", DEMO_MERCHANT_FILTER);
   const storeMap = new Map((stores || []).map((s) => [s.merchant_id, s]));
   return products.filter((p) => storeMap.has(p.merchant_id))
     .map((p) => ({ ...p, store: storeMap.get(p.merchant_id) }));
@@ -67,6 +69,7 @@ export async function GET(request: NextRequest) {
             .eq("is_active", true)
             .eq("is_published", true)
             .eq("show_in_marketplace", true)
+            .not("merchant_id", "in", DEMO_MERCHANT_FILTER)
             .order("order_count", { ascending: false })
             .limit(12)
         ),
@@ -75,6 +78,7 @@ export async function GET(request: NextRequest) {
             .from("stores")
             .select("*")
             .eq("is_published", true)
+            .not("merchant_id", "in", DEMO_MERCHANT_FILTER)
             .order("total_orders", { ascending: false })
             .limit(8)
         ),
@@ -85,6 +89,7 @@ export async function GET(request: NextRequest) {
             .eq("is_active", true)
             .eq("is_published", true)
             .eq("show_in_marketplace", true)
+            .not("merchant_id", "in", DEMO_MERCHANT_FILTER)
             .order("created_at", { ascending: false })
             .limit(12)
         ),
