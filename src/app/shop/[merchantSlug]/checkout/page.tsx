@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
@@ -23,6 +23,7 @@ import {
   CreditCard,
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
+import { checkoutQuoteContext, checkoutQuoteReady, parseCheckoutQuote, randomizedPinKeys, validTransactionPin, type CheckoutQuote } from "@/lib/checkout-quote";
 
 // ─── Types ───
 
@@ -39,6 +40,8 @@ interface WalletInfo {
   balance: number;
   wallet_type: string;
   currency_code: string;
+  available_balance?: number;
+  spending_enabled?: boolean;
 }
 
 interface OrderData {
@@ -70,6 +73,11 @@ function clearCart(merchantSlug: string) {
 }
 
 const CHECKOUT_DOMAIN = "https://checkout.peeap.com";
+const PEEAP_API = process.env.NEXT_PUBLIC_PEEAP_API_URL || "https://api.peeap.com";
+// Direct mobile-money initiation uses a separate POS total and does not yet
+// support the bound product/address/shipping quote required by this checkout.
+const MOBILE_MONEY_QUOTE_SUPPORTED = false;
+const formatMoney = (amount: number) => `SLE ${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 // ─── QR Code Component (pure SVG, no dependency) ───
 
@@ -117,43 +125,19 @@ function PinOverlay({
   onClose,
   loading,
   error,
+  total,
+  shippingAddress,
 }: {
   onSubmit: (pin: string) => void;
   onClose: () => void;
   loading: boolean;
   error: string | null;
+  total: number;
+  shippingAddress: string;
 }) {
-  const [digits, setDigits] = useState(["", "", "", ""]);
-  const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
-
-  useEffect(() => {
-    inputRefs.current[0]?.focus();
-  }, []);
-
-  const handleChange = (index: number, value: string) => {
-    if (!/^\d*$/.test(value)) return;
-    const newDigits = [...digits];
-    newDigits[index] = value.slice(-1);
-    setDigits(newDigits);
-
-    if (value && index < 3) {
-      inputRefs.current[index + 1]?.focus();
-    }
-
-    // Auto-submit when all 4 digits entered
-    if (value && index === 3) {
-      const pin = newDigits.join("");
-      if (pin.length === 4) {
-        onSubmit(pin);
-      }
-    }
-  };
-
-  const handleKeyDown = (index: number, e: React.KeyboardEvent) => {
-    if (e.key === "Backspace" && !digits[index] && index > 0) {
-      inputRefs.current[index - 1]?.focus();
-    }
-  };
+  const [pin, setPin] = useState("");
+  const [keys, setKeys] = useState<number[]>([]);
+  useEffect(() => { setKeys(randomizedPinKeys()); }, []);
 
   return (
     <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-4">
@@ -169,28 +153,25 @@ function PinOverlay({
           <div className="w-14 h-14 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-3">
             <Lock className="w-7 h-7 text-emerald-600" />
           </div>
-          <h3 className="text-lg font-bold text-gray-900">Enter your PIN</h3>
+          <h3 className="text-lg font-bold text-gray-900">Confirm {formatMoney(total)}</h3>
           <p className="text-sm text-gray-500 mt-1">
-            Enter your 4-digit transaction PIN to confirm payment
+            Product and shipping included. Enter your 4–6 digit transaction PIN, then confirm.
           </p>
+          <p className="mt-2 text-xs text-gray-500">Delivery to {shippingAddress}</p>
         </div>
 
         <div className="flex justify-center gap-3 mb-6">
-          {digits.map((d, i) => (
-            <input
+          {Array.from({ length: Math.max(4, pin.length) }, (_, i) => (
+            <span
               key={i}
-              ref={(el) => { inputRefs.current[i] = el; }}
-              type="password"
-              inputMode="numeric"
-              maxLength={1}
-              value={d}
-              onChange={(e) => handleChange(i, e.target.value)}
-              onKeyDown={(e) => handleKeyDown(i, e)}
-              disabled={loading}
-              className="w-14 h-14 text-center text-2xl font-bold border-2 rounded-xl focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 outline-none transition-all disabled:opacity-50"
-            />
+              aria-hidden="true"
+              className="flex h-11 w-10 items-center justify-center rounded-xl border-2 text-2xl font-bold"
+            >{pin[i] ? "•" : ""}</span>
           ))}
         </div>
+        <p className="sr-only" aria-live="polite">{pin.length} PIN digits entered</p>
+        <div className="mb-4 grid grid-cols-3 gap-2">{keys.map((digit) => <button key={digit} type="button" disabled={loading || pin.length >= 6} onClick={() => setPin((value) => value.length < 6 ? value + digit : value)} className="rounded-xl bg-gray-100 py-3 text-xl font-semibold hover:bg-gray-200 disabled:opacity-40">{digit}</button>)}<button type="button" disabled={loading || !pin} onClick={() => setPin("")} className="rounded-xl bg-gray-100 text-sm disabled:opacity-40">Clear</button><button type="button" disabled={loading || !pin} onClick={() => setPin((value) => value.slice(0, -1))} className="rounded-xl bg-gray-100 text-sm disabled:opacity-40">Delete</button></div>
+        <button type="button" disabled={loading || !validTransactionPin(pin)} onClick={() => { if (validTransactionPin(pin)) onSubmit(pin); }} className="mb-4 w-full rounded-xl bg-emerald-600 py-3 font-semibold text-white disabled:opacity-40">Confirm {formatMoney(total)}</button>
 
         {error && (
           <p className="text-sm text-red-500 text-center mb-4">{error}</p>
@@ -230,9 +211,6 @@ export default function CheckoutPage() {
   const [error, setError] = useState<string | null>(null);
   const [storeId, setStoreId] = useState<string | null>(null);
   const [storeName, setStoreName] = useState<string>("");
-  const [storeDeliveryFee, setStoreDeliveryFee] = useState(0);
-  const [storeFreeDeliveryMin, setStoreFreeDeliveryMin] = useState(0);
-  const [storeOffersDelivery, setStoreOffersDelivery] = useState(false);
   const [storeLoading, setStoreLoading] = useState(true);
   const [storeError, setStoreError] = useState<string | null>(null);
   const [loggingIn, setLoggingIn] = useState(false);
@@ -255,12 +233,21 @@ export default function CheckoutPage() {
   const [showPin, setShowPin] = useState(false);
   const [pinError, setPinError] = useState<string | null>(null);
   const purchaseKeyRef = useRef<string | null>(null);
+  const purchaseBusyRef = useRef(false);
+  const [quote, setQuote] = useState<CheckoutQuote | null>(null);
+  const [quotedContext, setQuotedContext] = useState("");
+  const [quoteLoading, setQuoteLoading] = useState(false);
+  const [quoteError, setQuoteError] = useState<string | null>(null);
+  const [quoteRefresh, setQuoteRefresh] = useState(0);
+  const [, setQuoteClock] = useState(0);
   const [momoPaying, setMomoPaying] = useState(false);
   const [momoUrl, setMomoUrl] = useState<string | null>(null);
   const [cardPaying, setCardPaying] = useState(false);
   const [showCardInput, setShowCardInput] = useState(false);
   const [cardToken, setCardToken] = useState("");
   const [cardPin, setCardPin] = useState("");
+  const cartLines = useMemo(() => items.map((item) => ({ product_id: item.product_id, quantity: item.quantity })), [items]);
+  const currentQuoteContext = checkoutQuoteContext(user?.id, token, merchantSlug, cartLines, selectedAddressId);
 
   // ─── Effects ───
 
@@ -279,9 +266,6 @@ export default function CheckoutPage() {
         if (data.store?.id) {
           setStoreId(data.store.id);
           setStoreName(data.store.name || "");
-          setStoreDeliveryFee(data.store.delivery_fee || 0);
-          setStoreFreeDeliveryMin(data.store.free_delivery_minimum || 0);
-          setStoreOffersDelivery(!!data.store.offers_delivery);
         } else {
           setStoreError("Could not load store information.");
         }
@@ -294,15 +278,22 @@ export default function CheckoutPage() {
 
   // Fetch wallets + shipping addresses when user is logged in
   useEffect(() => {
+    let cancelled = false;
+    setWallets([]);
+    setSavedAddresses([]);
+    setSelectedAddressId(null);
+    setDeliveryAddress("");
+    setShowPin(false);
+    purchaseKeyRef.current = null;
     if (!user?.id || !token) return;
     setWalletsLoading(true);
     fetch(`/api/wallet?user_id=${encodeURIComponent(user.id)}`, {
       headers: { Authorization: `Session ${token}` },
     })
       .then((r) => { if (!r.ok) throw new Error("Wallet unavailable"); return r.json(); })
-      .then((data) => setWallets(data.wallets || []))
-      .catch(() => setError("Could not verify your Peeap wallet. Please sign in again or retry."))
-      .finally(() => setWalletsLoading(false));
+      .then((data) => { if (!cancelled) setWallets(data.wallets || []); })
+      .catch(() => { if (!cancelled) setError("Could not verify your Peeap wallet. Please sign in again or retry."); })
+      .finally(() => { if (!cancelled) setWalletsLoading(false); });
 
     // Load shipping addresses
     setLoadingAddress(true);
@@ -311,19 +302,58 @@ export default function CheckoutPage() {
     })
       .then((r) => (r.ok ? r.json() : { addresses: [] }))
       .then((data) => {
+        if (cancelled) return;
         const addrs = (data.addresses || []).filter((address: { id: string }) => address.id !== "profile");
         setSavedAddresses(addrs);
         // Auto-fill with default address
         const preferredId = sessionStorage.getItem("store_delivery_address_id");
         const defaultAddr = addrs.find((a: any) => a.id === preferredId) || addrs.find((a: any) => a.is_default) || addrs[0];
-        if (defaultAddr && !deliveryAddress) {
+        if (defaultAddr) {
           setDeliveryAddress([defaultAddr.address_line, defaultAddr.city].filter(Boolean).join(', '));
           setSelectedAddressId(defaultAddr.id);
         }
       })
       .catch(() => {})
-      .finally(() => setLoadingAddress(false));
+      .finally(() => { if (!cancelled) setLoadingAddress(false); });
+    return () => { cancelled = true; };
   }, [user?.id, token]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const controller = new AbortController();
+    setQuote(null);
+    setQuotedContext("");
+    setQuoteError(null);
+    setShowPin(false);
+    if (!user?.id || !token || !selectedAddressId || !storeId || cartLines.length === 0 || phase !== "form") {
+      setQuoteLoading(false);
+      return () => { cancelled = true; controller.abort(); };
+    }
+    setQuoteLoading(true);
+    fetch(`${PEEAP_API}/api/store/purchase/quote`, {
+      method: "POST", cache: "no-store", signal: controller.signal,
+      headers: { "Content-Type": "application/json", Authorization: `Session ${token}` },
+      body: JSON.stringify({ store_slug: merchantSlug, items: cartLines, address_id: selectedAddressId, shipping_address_id: selectedAddressId }),
+    }).then(async (response) => {
+      const data = await response.json();
+      if (!response.ok || data.success !== true) throw new Error(data.error_description || data.error || "Could not calculate shipping. Choose a supported delivery address or retry.");
+      const confirmed = parseCheckoutQuote(data, cartLines, selectedAddressId);
+      if (!cancelled) { setQuote(confirmed); setQuotedContext(currentQuoteContext); }
+    }).catch((cause) => {
+      if (!cancelled) setQuoteError(cause instanceof Error ? cause.message : "Could not verify the checkout total. Try again.");
+    }).finally(() => { if (!cancelled) setQuoteLoading(false); });
+    return () => { cancelled = true; controller.abort(); };
+  }, [currentQuoteContext, storeId, phase, quoteRefresh]);
+
+  useEffect(() => {
+    if (!quote) return;
+    const timeout = setTimeout(() => {
+      setQuoteClock((value) => value + 1);
+      setQuoteError("Your quote expired. Refresh and review the product and shipping total before paying.");
+      if (!purchaseBusyRef.current) setShowPin(false);
+    }, Math.max(0, Date.parse(quote.quote_expires_at) - Date.now()));
+    return () => clearTimeout(timeout);
+  }, [quote]);
 
   // Poll order status in payment phase
   useEffect(() => {
@@ -344,16 +374,17 @@ export default function CheckoutPage() {
 
   // ─── Computed ───
 
-  const subtotal = items.reduce((s, i) => s + i.price * i.quantity, 0);
+  const estimatedSubtotal = items.reduce((s, i) => s + i.price * i.quantity, 0);
   const totalItems = items.reduce((s, i) => s + i.quantity, 0);
-  const isDelivery = !!deliveryAddress.trim();
-  const deliveryFee = isDelivery && storeOffersDelivery
-    ? (storeFreeDeliveryMin > 0 && subtotal >= storeFreeDeliveryMin ? 0 : storeDeliveryFee)
-    : 0;
-  const orderTotal = subtotal + deliveryFee;
-  const primaryWallet = wallets.find((w: any) => w.spending_enabled) || wallets.find((w) => w.wallet_type === "primary") || wallets.sort((a, b) => b.balance - a.balance)[0];
-  const walletBalance = primaryWallet?.balance ?? 0;
-  const hasEnoughBalance = walletBalance >= orderTotal;
+  const quoteReady = !quoteLoading && !quoteError && checkoutQuoteReady(quote, quotedContext, currentQuoteContext);
+  const subtotal = quoteReady ? quote!.product_subtotal : estimatedSubtotal;
+  const deliveryFee = quoteReady ? quote!.delivery_fee : null;
+  const orderTotal = quoteReady ? quote!.charge_total : null;
+  const primaryWallet = wallets.find((wallet) => wallet.currency_code === "SLE" && wallet.spending_enabled)
+    || wallets.find((wallet) => wallet.currency_code === "SLE" && wallet.wallet_type === "primary");
+  const walletBalance = Number(primaryWallet?.available_balance ?? primaryWallet?.balance ?? 0);
+  const hasEnoughBalance = quoteReady && orderTotal !== null && !walletsLoading && walletBalance >= orderTotal;
+  const summaryItems = quoteReady ? quote!.items.map((item) => ({ ...item, price: item.unit_price })) : items;
   const qrUrl = order?.payment_reference
     ? `${CHECKOUT_DOMAIN}/checkout/pay/${order.payment_reference}`
     : null;
@@ -392,8 +423,6 @@ export default function CheckoutPage() {
     }
   };
 
-  const PEEAP_API = process.env.NEXT_PUBLIC_PEEAP_API_URL || "https://api.peeap.com";
-
   // ─── Direct wallet-to-wallet purchase (no checkout session needed) ───
   const handlePlaceOrder = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -409,6 +438,10 @@ export default function CheckoutPage() {
       setError("Choose a saved shipping address in Peeap before buying physical goods.");
       return;
     }
+    if (!quoteReady || orderTotal === null) {
+      setError(quoteError || "Wait for the confirmed product and shipping quote before entering your PIN.");
+      return;
+    }
 
     // Check balance upfront
     if (!hasEnoughBalance) {
@@ -421,8 +454,14 @@ export default function CheckoutPage() {
   };
 
   const submitPurchase = async (pin: string) => {
-    if (loading || !user || !token || !selectedAddressId) return;
+    if (purchaseBusyRef.current || loading || !user || !token || !selectedAddressId || !validTransactionPin(pin)) return;
+    if (!quoteReady || !checkoutQuoteReady(quote, quotedContext, currentQuoteContext)) {
+      setShowPin(false);
+      setError("Your checkout quote expired or changed. Refresh and review the total before paying.");
+      return;
+    }
     if (!purchaseKeyRef.current) purchaseKeyRef.current = crypto.randomUUID();
+    purchaseBusyRef.current = true;
     setLoading(true);
     try {
       // Direct wallet-to-wallet via Peeap API — no checkout session needed
@@ -439,19 +478,24 @@ export default function CheckoutPage() {
             quantity: i.quantity,
           })),
           address_id: selectedAddressId,
+          shipping_address_id: selectedAddressId,
+          quote_token: quote!.quote_token,
           idempotency_key: purchaseKeyRef.current,
           pin,
           customer_name: user?.name || user?.email || user?.phone || "Peeap User",
           customer_phone: user?.phone || "",
           notes: notes.trim() || undefined,
-          delivery_address: deliveryAddress.trim() || undefined,
-          delivery_city: deliveryAddress.trim() ? undefined : undefined,
-          order_type: deliveryAddress.trim() ? "delivery" : "online",
+          order_type: "delivery",
         }),
       });
 
       const data = await res.json();
       if (!res.ok || data.success !== true) {
+        if (String(data.error || "").startsWith("CHECKOUT_QUOTE_")) {
+          setShowPin(false);
+          setQuoteError(data.error_description || "The quote changed. Refresh and review the total before paying.");
+          return;
+        }
         if (data.error === "insufficient_balance") {
           setPinError(data.error_description || "Insufficient wallet balance.");
         } else if (data.error === "no_address") {
@@ -473,19 +517,24 @@ export default function CheckoutPage() {
       setOrder({
         id: data.order?.id || "",
         order_number: data.order?.order_number || "N/A",
-        total_amount: data.order?.total || subtotal,
+        total_amount: data.order?.charge_total ?? data.charge_total ?? data.order?.total_amount ?? quote!.charge_total,
         payment_reference: data.transaction_ref || "",
       });
       setPhase("success");
     } catch (err) {
       setPinError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
+      purchaseBusyRef.current = false;
       setLoading(false);
     }
   };
 
   // Mobile money — only method that still needs a checkout session
   const handleMobileMoney = async () => {
+    if (!MOBILE_MONEY_QUOTE_SUPPORTED) {
+      setError("Mobile-money purchase checkout is not available with confirmed shipping yet. Add money to your Peeap wallet, then return to pay the reviewed total.");
+      return;
+    }
     if (!user || !storeId) return;
     setMomoPaying(true);
     setError(null);
@@ -628,8 +677,8 @@ export default function CheckoutPage() {
               <div className="space-y-3">
                 {[
                   { icon: Wallet, text: "Pay from your Peeap wallet" },
-                  { icon: QrCode, text: "Scan QR to pay instantly" },
-                  { icon: Smartphone, text: "Orange Money supported" },
+                  { icon: MapPin, text: "Review your delivery address and shipping fee" },
+                  { icon: Shield, text: "Confirm the complete total before payment" },
                 ].map(({ icon: Icon, text }) => (
                   <div key={text} className="flex items-center gap-3 text-emerald-100">
                     <div className="w-8 h-8 rounded-lg bg-white/15 flex items-center justify-center">
@@ -694,16 +743,11 @@ export default function CheckoutPage() {
                     <p className="text-xs text-emerald-600">+{items.length - 3} more items</p>
                   )}
                 </div>
-                {isDelivery && deliveryFee > 0 && (
-                  <div className="flex items-center justify-between text-emerald-800 text-sm">
-                    <span>Delivery</span>
-                    <span>NLe {deliveryFee.toLocaleString()}</span>
-                  </div>
-                )}
                 <div className="border-t border-emerald-200 pt-3 flex items-center justify-between">
-                  <span className="font-semibold text-emerald-900">Total</span>
-                  <span className="text-xl font-bold text-emerald-900">NLe {orderTotal.toLocaleString()}</span>
+                  <span className="font-semibold text-emerald-900">Estimated products</span>
+                  <span className="text-xl font-bold text-emerald-900">{formatMoney(estimatedSubtotal)}</span>
                 </div>
+                <p className="mt-2 text-xs text-emerald-800">Final product prices and shipping will be confirmed after sign-in and address selection.</p>
               </div>
 
               <button
@@ -743,7 +787,7 @@ export default function CheckoutPage() {
             Your order <span className="font-semibold text-gray-900">{order.order_number}</span> has been placed.
           </p>
           <p className="text-2xl font-bold text-emerald-600 mb-8">
-            NLe {order.total_amount.toLocaleString()}
+            {formatMoney(order.total_amount)}
           </p>
 
           <div className="space-y-3">
@@ -978,12 +1022,14 @@ export default function CheckoutPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {showPin && (
+      {showPin && quoteReady && quote && (
         <PinOverlay
           onSubmit={submitPurchase}
           onClose={() => { if (!loading) { setShowPin(false); setPinError(null); } }}
           loading={loading}
           error={pinError}
+          total={quote.charge_total}
+          shippingAddress={[quote.shipping_address.address, quote.shipping_address.city].join(", ")}
         />
       )}
       {/* Header */}
@@ -1044,23 +1090,11 @@ export default function CheckoutPage() {
                 Shipping
               </h2>
 
-              {/* Delivery promo banner */}
-              {storeOffersDelivery && (
-                <div className="bg-gradient-to-r from-violet-50 to-indigo-50 border border-violet-200 rounded-xl p-3.5 mb-4">
-                  <div className="flex items-center gap-2 text-violet-800 font-semibold text-sm">
-                    <span className="text-lg">🚀</span>
-                    Get it delivered to your door
-                  </div>
-                  <p className="text-xs text-violet-600 mt-1">
-                    {storeFreeDeliveryMin > 0
-                      ? `Free delivery on orders over NLe ${storeFreeDeliveryMin.toLocaleString()}! Standard delivery: NLe ${storeDeliveryFee.toLocaleString()}.`
-                      : storeDeliveryFee > 0
-                        ? `Fast delivery for just NLe ${storeDeliveryFee.toLocaleString()}. Get your order delivered in minutes!`
-                        : "Free delivery on all orders. Get your order delivered in minutes!"
-                    }
-                  </p>
-                </div>
-              )}
+              <div className="mb-4 rounded-xl border border-violet-200 bg-violet-50 p-3.5 text-sm text-violet-900">
+                <p className="font-semibold">City / zone shipping is included in your payment</p>
+                <p className="mt-1">Choose a saved address below to get the configured delivery fee. Payment stays blocked until the complete total is confirmed.</p>
+                {quoteReady && quote && <p className="mt-2 font-medium">Confirmed destination: {quote.shipping_address.address}, {quote.shipping_address.city}</p>}
+              </div>
 
               <div className="space-y-4">
                 <div>
@@ -1083,7 +1117,7 @@ export default function CheckoutPage() {
                             sessionStorage.setItem("store_delivery_address_id", addr.id);
                           }}
                           className={`w-full text-left p-3 rounded-lg border transition-all text-sm ${
-                            deliveryAddress === [addr.address_line, addr.city].filter(Boolean).join(', ')
+                            selectedAddressId === addr.id
                               ? 'border-emerald-500 bg-emerald-50 ring-1 ring-emerald-500'
                               : 'border-gray-200 hover:border-gray-300'
                           }`}
@@ -1153,24 +1187,28 @@ export default function CheckoutPage() {
                   )}
                 </div>
                 <p className="text-xs text-emerald-600">
-                  {hasEnoughBalance
+                  {!quoteReady ? "Confirm your delivery address and shipping total first." : hasEnoughBalance
                     ? "Payment will be deducted directly from your wallet."
                     : "Insufficient balance — deposit funds to continue."}
                 </p>
               </div>
-              {!hasEnoughBalance && !walletsLoading && (
+              {quoteReady && !hasEnoughBalance && !walletsLoading && (
+                <>
                 <button
                   type="button"
                   onClick={handleMobileMoney}
-                  disabled={momoPaying}
+                  disabled={!MOBILE_MONEY_QUOTE_SUPPORTED || momoPaying}
                   className="mt-3 w-full flex items-center justify-center gap-2 py-3 border-2 border-orange-300 text-orange-700 rounded-xl font-semibold hover:bg-orange-50 transition-colors disabled:opacity-50"
                 >
                   {momoPaying ? (
                     <><Loader2 className="w-4 h-4 animate-spin" /> Initiating...</>
                   ) : (
-                    <><Smartphone className="w-4 h-4" /> Deposit via Mobile Money</>
+                    <><Smartphone className="w-4 h-4" /> Mobile-money checkout unavailable</>
                   )}
                 </button>
+                <p className="mt-2 text-xs text-gray-600">Add money to your Peeap wallet first, then return to this checkout. This avoids charging a different product or shipping total.</p>
+                <a href="https://my.peeap.com/dashboard" target="_blank" rel="noopener noreferrer" className="mt-2 inline-block text-sm font-semibold text-emerald-700 hover:underline">Open Peeap wallet →</a>
+                </>
               )}
             </div>
           </div>
@@ -1181,7 +1219,7 @@ export default function CheckoutPage() {
               <h2 className="text-lg font-semibold text-gray-900 mb-4">Order Summary</h2>
 
               <div className="space-y-3 max-h-64 overflow-y-auto">
-                {items.map((item) => (
+                {summaryItems.map((item) => (
                   <div key={item.product_id} className="flex gap-3 items-start">
                     <div className="w-12 h-12 relative bg-gray-100 rounded-lg overflow-hidden shrink-0">
                       {item.image_url ? (
@@ -1195,7 +1233,7 @@ export default function CheckoutPage() {
                       <p className="text-xs text-gray-500">Qty: {item.quantity}</p>
                     </div>
                     <p className="text-sm font-medium text-gray-900 shrink-0">
-                      NLe {(item.price * item.quantity).toLocaleString()}
+                      {quoteReady ? formatMoney(item.price * item.quantity) : "To confirm"}
                     </p>
                   </div>
                 ))}
@@ -1203,41 +1241,36 @@ export default function CheckoutPage() {
 
               <div className="border-t mt-4 pt-4 space-y-2 text-sm">
                 <div className="flex justify-between text-gray-600">
-                  <span>Subtotal ({totalItems} items)</span>
-                  <span>NLe {subtotal.toLocaleString()}</span>
+                  <span>Products ({totalItems} items)</span>
+                  <span>{quoteReady ? formatMoney(subtotal) : "To confirm"}</span>
                 </div>
-                {isDelivery && (
-                  <div className="flex justify-between text-gray-600">
-                    <span>Delivery</span>
-                    <span className={deliveryFee === 0 ? "text-green-600 font-medium" : ""}>
-                      {deliveryFee === 0 ? "Free" : `NLe ${deliveryFee.toLocaleString()}`}
-                    </span>
-                  </div>
-                )}
-                {isDelivery && deliveryFee === 0 && storeFreeDeliveryMin > 0 && (
-                  <p className="text-[10px] text-green-600">Free delivery on orders over NLe {storeFreeDeliveryMin.toLocaleString()}</p>
-                )}
+                <div className="flex justify-between text-gray-600"><span>Shipping</span><span>{deliveryFee !== null ? formatMoney(deliveryFee) : "Choose address / confirm"}</span></div>
                 <div className="flex justify-between font-semibold text-gray-900 text-base pt-2 border-t">
                   <span>Total</span>
-                  <span>NLe {orderTotal.toLocaleString()}</span>
+                  <span>{orderTotal !== null ? formatMoney(orderTotal) : "To confirm"}</span>
                 </div>
               </div>
+              {quoteLoading && <p role="status" className="mt-3 text-sm text-violet-700">Confirming product prices and shipping fee…</p>}
+              {quoteError && <p role="alert" className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{quoteError}</p>}
+              {selectedAddressId && !loading && <button type="button" disabled={quoteLoading} onClick={() => { setQuote(null); setQuoteError(null); setShowPin(false); setQuoteRefresh((value) => value + 1); }} className="mt-3 text-sm font-semibold text-violet-700 hover:underline disabled:opacity-50">Refresh product &amp; shipping quote</button>}
 
               <button
                 type="submit"
-                disabled={loading || !storeId || (!hasEnoughBalance && !walletsLoading)}
+                disabled={loading || !storeId || !quoteReady || walletsLoading || !hasEnoughBalance}
                 className={`w-full mt-6 py-3.5 rounded-xl font-semibold text-white transition-all flex items-center justify-center gap-2 ${
-                  loading || !storeId || (!hasEnoughBalance && !walletsLoading)
+                  loading || !storeId || !quoteReady || walletsLoading || !hasEnoughBalance
                     ? "bg-gray-400 cursor-not-allowed"
                     : "bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] shadow-lg shadow-emerald-600/25"
                 }`}
               >
                 {loading ? (
                   <><Loader2 className="w-5 h-5 animate-spin" /> Paying...</>
+                ) : !quoteReady ? (
+                  <><Lock className="w-4 h-4" /> Confirm shipping total first</>
                 ) : !hasEnoughBalance && !walletsLoading ? (
                   <><AlertCircle className="w-4 h-4" /> Insufficient Balance</>
                 ) : (
-                  <><Wallet className="w-4 h-4" /> Pay NLe {orderTotal.toLocaleString()} with Wallet</>
+                  <><Wallet className="w-4 h-4" /> Pay {formatMoney(orderTotal!)} with Wallet</>
                 )}
               </button>
 
